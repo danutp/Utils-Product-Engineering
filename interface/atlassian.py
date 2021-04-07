@@ -47,6 +47,9 @@ REQUEST_RETRY_DELAY_SEC = 10
 # Timeout before request will be rejected
 REQUEST_TIMEOUT_SEC = 60
 
+REQUEST_DEFAULT_TIMEOUT = 30
+ARTIFACT_REQUEST_DEFAULT_TIMEOUT = 60
+
 # Status codes
 SUCCESS_OK = 200
 SUCCESS_CREATED = 201
@@ -1453,9 +1456,6 @@ class BitbucketUtils(AtlassianUtils):
 class BambooUtils(AtlassianUtils):
     """Bamboo utils class."""
 
-    REQUEST_DEFAULT_TIMEOUT = 30
-    ARTIFACT_REQUEST_DEFAULT_TIMEOUT = 60
-
     def __init__(self):
         super(AtlassianUtils, self).__init__()
         self.__account = BambooAccount()
@@ -1731,9 +1731,9 @@ class BambooUtils(AtlassianUtils):
                 headers=self.headers,
                 data=json.dumps(request_payload) if request_payload else None,
                 timeout=(
-                    BambooUtils.ARTIFACT_REQUEST_DEFAULT_TIMEOUT
+                    ARTIFACT_REQUEST_DEFAULT_TIMEOUT
                     if self.query_type in ['download_artifact', 'query_for_artifacts']
-                    else BambooUtils.REQUEST_DEFAULT_TIMEOUT
+                    else REQUEST_DEFAULT_TIMEOUT
                 ),
                 allow_redirects=False
             )
