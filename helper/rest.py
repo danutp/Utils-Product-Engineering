@@ -5,7 +5,7 @@ import platform
 current_python_version = platform.python_version_tuple()
 if int(current_python_version[0]) >= 3:
     from urllib import request, error
-else: # Python 2.7
+else:  # Python 2.7
     import urllib2
 
 
@@ -216,6 +216,7 @@ class RESTUtils:
 
     def __init__(self):
         pass
+
 
 if int(current_python_version[0]) >= 3:
     RESTUtils = RESTUtilsPy3

@@ -20,7 +20,7 @@ import time
 import threading
 
 from bs4 import BeautifulSoup
-from debugging import MethodDebug
+from helper.debugging import MethodDebug
 from collections import defaultdict, namedtuple
 from distutils import util
 from helper.git import GitUtils
@@ -73,36 +73,49 @@ class BitbucketTag(object):
         self.latest_commit = latest_commit
 
 
-class BambooAccount(object):
+class AtlassianAccount(object):
+    """
+    Class which stores credentials for using :class:`AtlassianUtils` services
+    """
+
     def __init__(self):
-        self.__username, self.__password = self.__load_credentials()
+
+        self.__user_account, self.__pwd = self.__load_credentials()
 
     @property
-    def username(self):
-        return self.__username
+    def user_account(self):
+
+        return self.__user_account
 
     @property
-    def password(self):
-        return self.__password
+    def pwd(self):
+
+        return self.__pwd
 
     @staticmethod
     def __load_credentials():
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)),
-                                               'bamboo',
-                                               'auth_credentials.json'))) as fd:
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               'atlassian',
+                               'auth_credentials.json')) as fd:
             credentials = json.loads(fd.read())
 
         return credentials['username'], base64.b64decode(credentials['password'])
 
 
-class AtlassianAccount(object):
-    """
-    POD class which stores credentials for using :class:`AtlassianUtils` services
-    """
+class BambooAccount(AtlassianAccount):
+    """Created for backwards compatibility, TBD if it will be kept"""
 
-    def __init__(self, user_account=None, pwd=None):
-        self.user_account = user_account
-        self.pwd = pwd
+    def __init__(self):
+
+        super(BambooAccount, self).__init__()
+
+    @property
+    def username(self):
+        return self.user_account
+    
+    @property
+    def password(self):
+        return self.pwd
 
 
 class AtlassianUtils(object):
@@ -185,7 +198,7 @@ class AtlassianUtils(object):
     )
 
     # Get a pull request's activities
-    GET_PULL_REQUEST_ACTIVITY_URI = (
+    BITBUCKET_GET_PULL_REQUEST_ACTIVITY_URI = (
         'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}/activities'
         '?start={3}&limit=1000'
     )
@@ -207,8 +220,8 @@ class AtlassianUtils(object):
     # Get a file from a specified repository
     BITBUCKET_GET_FILE_URL = 'https://bitbucket.sw.nxp.com/rest/api/1.0/projects/{0}/repos/{1}/browse/{2}'
 
-
     # BAMBOO constants:
+    # Bamboo server
     BAMBOO_SERVER = "bamboo1"
 
     # Bamboo plan link
@@ -230,7 +243,6 @@ class AtlassianUtils(object):
     BAMBOO_LATEST_QUEUE_URL = r'https://{0}.sw.nxp.com/rest/api/latest/queue.json'
     BAMBOO_ARTIFACT_URL = r'https://{0}.sw.nxp.com/browse/{1}/artifact/{2}/{3}/'
 
-
     #
     # Each Bamboo variable is visible as an environment variable.
     # The environment variable name is obtained from the Bamboo variable name prefixed with this string
@@ -238,7 +250,7 @@ class AtlassianUtils(object):
 
     def __init__(self,
                  jira_project_key,
-                 account_info=AtlassianAccount('SVC_DEVTECH', 'nhR9p32aW8'),
+                 account_info=AtlassianAccount(),
                  rest_service_configuration=RESTServiceConfiguration(SSLContext(_ssl.PROTOCOL_TLSv1_2))):
 
         """
@@ -934,8 +946,8 @@ class BitbucketUtils(AtlassianUtils):
             return self.bitbucket_get_next_commit_after_tag(repo, latest_tag)
         except:  # noqa: E722
             print(
-                'The first commit after latest tag of Bitbucket repository {0} not be retrieved due to exception'.format(
-                    repo)
+                'The first commit after latest tag of Bitbucket repository {0} not be retrieved due to '
+                'exception'.format(repo)
             )
             raise
 
@@ -1041,7 +1053,10 @@ class BitbucketUtils(AtlassianUtils):
             files_changed = []
             next_page_start = 0
             while True:
-                uri = AtlassianUtils.BITBUCKET_GET_CHANGES_URL.format(self.jira_project_key, repo, branch, next_page_start)
+                uri = AtlassianUtils.BITBUCKET_GET_CHANGES_URL.format(self.jira_project_key,
+                                                                      repo,
+                                                                      branch,
+                                                                      next_page_start)
                 response = self.rest_get(uri)
                 data = json.loads(response.read())
 
@@ -1059,7 +1074,8 @@ class BitbucketUtils(AtlassianUtils):
 
             return files_changed
         except:  # noqa: E722
-            print('Bitbucket repository {0} changes on branch {1} could not be read due to exception'.format(repo, branch))
+            print('Bitbucket repository {0} changes on branch {1} could not be read due to exception'.format(repo,
+                                                                                                             branch))
             raise
 
     def bitbucket_get_merge_targets_for_branch(self, repo, branch):
@@ -1114,8 +1130,9 @@ class BitbucketUtils(AtlassianUtils):
             # Only merge commits are selected
             if message.startswith('Merge pull request #'):
                 jira_ids = list(set(re.findall('({0}-[0-9]+)'.format(self.jira_project_key), message)))
+                jira_utils = JiraUtils(self.jira_project_key)
                 for jira_id in jira_ids:
-                    status = JiraUtils.jira_get_defect_status(jira_id)  # convert from Unicode
+                    status = jira_utils.jira_get_defect_status(jira_id)  # convert from Unicode
                     id_dict[status].append(jira_id)
                     id_dict[status] = list(set(id_dict[status]))
 
@@ -1195,7 +1212,7 @@ class BitbucketUtils(AtlassianUtils):
         next_page_start = 0
         activities = []
         while True:
-            uri = AtlassianUtils.GET_PULL_REQUEST_ACTIVITY_URI.format(
+            uri = AtlassianUtils.BITBUCKET_GET_PULL_REQUEST_ACTIVITY_URI.format(
                 self.jira_project_key, repo, pr_id, next_page_start)
             response = self.rest_get(uri)
             data = json.loads(response.read())
@@ -1272,7 +1289,8 @@ class BitbucketUtils(AtlassianUtils):
         """
         Get statistics of code review done via pull requests whose change set contains source code files
         :param repo: The BITBUCKET repo for which to get the statistics
-        :param branch: The BITBUCKET branch for which to get the statistics. If None, the entire `repo` will be evaluated
+        :param branch: The BITBUCKET branch for which to get the statistics. If None, the entire `repo` will be
+                       evaluated
         :return: A `ReviewStatistics` instance
         """
 
