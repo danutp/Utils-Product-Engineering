@@ -23,7 +23,6 @@ from bs4 import BeautifulSoup
 from helper.debugging import MethodDebug
 from collections import defaultdict, namedtuple
 from distutils import util
-from helper.git import GitUtils
 from helper.pull_request import ReviewStatistics
 from helper.rest import RESTServiceConfiguration, RESTUtils
 from helper.utils import Utils
@@ -112,7 +111,7 @@ class BambooAccount(AtlassianAccount):
     @property
     def username(self):
         return self.user_account
-    
+
     @property
     def password(self):
         return self.pwd
