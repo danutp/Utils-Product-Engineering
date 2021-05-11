@@ -20,11 +20,11 @@ import time
 import threading
 
 from bs4 import BeautifulSoup
-from helper.debugging import MethodDebug
 from collections import defaultdict, namedtuple
 from distutils import util
+from helper.git import GitUtils
 from helper.pull_request import ReviewStatistics
-from helper.rest import RESTServiceConfiguration, RESTUtils
+from helper.rest import RESTServiceConfiguration, RESTUtils, AtlassianAccount
 from helper.utils import Utils
 from multiprocessing.pool import ThreadPool
 from multiprocessing import cpu_count
@@ -70,51 +70,6 @@ class BitbucketTag(object):
     def __init__(self, name, latest_commit):
         self.name = name
         self.latest_commit = latest_commit
-
-
-class AtlassianAccount(object):
-    """
-    Class which stores credentials for using :class:`AtlassianUtils` services
-    """
-
-    def __init__(self):
-
-        self.__user_account, self.__pwd = self.__load_credentials()
-
-    @property
-    def user_account(self):
-
-        return self.__user_account
-
-    @property
-    def pwd(self):
-
-        return self.__pwd
-
-    @staticmethod
-    def __load_credentials():
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                               'atlassian',
-                               'auth_credentials.json')) as fd:
-            credentials = json.loads(fd.read())
-
-        return credentials['username'], base64.b64decode(credentials['password'])
-
-
-class BambooAccount(AtlassianAccount):
-    """Created for backwards compatibility, TBD if it will be kept"""
-
-    def __init__(self):
-
-        super(BambooAccount, self).__init__()
-
-    @property
-    def username(self):
-        return self.user_account
-
-    @property
-    def password(self):
-        return self.pwd
 
 
 class AtlassianUtils(object):
@@ -346,43 +301,62 @@ class AtlassianUtils(object):
                 return [item]
         return None
 
-    def rest_get(self, uri):
+    def rest_get(self, uri, query_type=None, destination_file=None):
         """
         Runs a GET REST call on JIRA, Bitbucket or Bamboo
         :param uri: REST service URI
+        :param query_type: query type
+        :param destination_file: File where artifact will be downloaded in case of such a request
         :return: REST call response object
         """
 
         return RESTUtils.get(self.rest_service_configuration,
                              uri,
-                             self.account_info.user_account,
-                             self.account_info.pwd)
+                             self.account_info.username,
+                             self.account_info.password,
+                             query_type=query_type,
+                             destination_file=destination_file)
 
-    def rest_post(self, uri, payload):
+    def rest_post(self, uri, query_type=None, payload=None):
         """
         Runs a POST REST call on JIRA
         :param uri: REST service URI
+        :param query_type: query_type
         :param payload: Payload used by the call
         :return: REST call response object
         """
 
         return RESTUtils.post(self.rest_service_configuration,
                               uri,
-                              self.account_info.user_account,
-                              self.account_info.pwd, payload)
+                              self.account_info.username,
+                              self.account_info.password,
+                              query_type=query_type,
+                              payload=payload)
 
-    def rest_put(self, uri, payload):
+    def rest_put(self, uri, query_type=None, payload=None):
         """
         Runs a PUT REST call on JIRA
         :param uri: REST service URI
+        :param query_type: query_type
         :param payload: Payload used by the call
         :return: REST call response object
         """
 
         return RESTUtils.put(self.rest_service_configuration,
                              uri,
-                             self.account_info.user_account,
-                             self.account_info.pwd, payload)
+                             self.account_info.username,
+                             self.account_info.password,
+                             query_type=query_type,
+                             payload=payload)
+
+    def rest_create_url(self, server, build_key, query_type, stage=None, artifact=None, url_query_string=None):
+        """
+        Creats an URL dynamically
+        """
+        return RESTUtils.create_url(self, server, build_key, query_type,
+                                    stage=stage,
+                                    artifact=artifact,
+                                    url_query_string=url_query_string)
 
 
 class JiraUtils(AtlassianUtils):
@@ -1104,8 +1078,9 @@ class BitbucketUtils(AtlassianUtils):
 
             return files_changed
         except:  # noqa: E722
-            print('Bitbucket repository {0} changes on branch {1} could not be read due to exception'.format(repo,
-                                                                                                             branch))
+            print('Bitbucket repository {0} changes on branch {1} could not be read due to exception'.format(
+                repo, branch)
+            )
             raise
 
     def bitbucket_get_merge_targets_for_branch(self, repo, branch):
@@ -1155,13 +1130,13 @@ class BitbucketUtils(AtlassianUtils):
 
             next_page_start = data['nextPageStart']
 
+        jira_utils = JiraUtils(self.jira_project_key)
         id_dict = defaultdict(list)
         for c in commits:
             message = c['message']
             # Only merge commits are selected
             if message.startswith('Merge pull request #'):
                 jira_ids = list(set(re.findall('({0}-[0-9]+)'.format(self.jira_project_key), message)))
-                jira_utils = JiraUtils(self.jira_project_key)
                 for jira_id in jira_ids:
                     status = jira_utils.jira_get_defect_status(jira_id)  # convert from Unicode
                     id_dict[status].append(jira_id)
@@ -1509,328 +1484,10 @@ class BitbucketUtils(AtlassianUtils):
 class BambooUtils(AtlassianUtils):
     """Bamboo utils class."""
 
-    def __init__(self, jira_project_key):
-        super(BambooUtils, self).__init__(jira_project_key)
-        self.__account = BambooAccount()
-        self.__server = None
-        self.__stage = None
-        self.__artifact = None
-        self.__build_key = None
-        self.__url_query_string = None
-        self.__query_type = None
+    def __init__(self):
+        super(AtlassianUtils, self).__init__()
 
-    @property
-    def account(self):
-        """Bamboo account."""
-
-        return self.__account
-
-    @property
-    def server(self):
-        """Bamboo server."""
-
-        return self.__server
-
-    @server.setter
-    def server(self, server_value):
-        """Bamboo server setter."""
-
-        self.__server = server_value
-
-    @property
-    def stage(self):
-        """Bamboo stage."""
-
-        return self.__stage
-
-    @stage.setter
-    def stage(self, stage_value):
-        """Bamboo stage setter."""
-
-        self.__stage = stage_value
-
-    @property
-    def artifact(self):
-        """Bamboo artifact."""
-
-        return self.__artifact
-
-    @artifact.setter
-    def artifact(self, artifact_value):
-        """Bamboo artifact setter."""
-
-        self.__artifact = artifact_value
-
-    @property
-    def build_key(self):
-        """Build key."""
-
-        return self.__build_key
-
-    @build_key.setter
-    def build_key(self, build_key_value):
-        """Build key setter."""
-
-        self.__build_key = build_key_value
-
-    @property
-    def url_query_string(self):
-        """URL query string."""
-
-        return self.__url_query_string
-
-    @url_query_string.setter
-    def url_query_string(self, url_query_string_value):
-        """URL query string setter."""
-
-        self.__url_query_string = url_query_string_value
-
-    @property
-    def query_type(self):
-        """Query type defined in BambooUtils. E.g plan_info/plan_status/..."""
-
-        return self.__query_type
-
-    @query_type.setter
-    def query_type(self, query_type_value):
-        """Query type setter."""
-
-        self.__query_type = query_type_value
-
-    @property
-    def headers(self):
-        """Headers for a HTTP request."""
-
-        return {
-            "Connection": "Keep-Alive",
-            "Content-Type": "application/json;charset=UTF-8",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-US,en;q=0.9",
-            "DNT": "1",
-            "User-Agent": "Garbage browser: 5.6"
-        }
-
-    @staticmethod
-    def pack_response_to_client(values_to_pack=(None, None, None, None)):
-        """Pack the response to user.
-        :param values_to_pack: Values to pack in response dict
-        :return: dictionary
-        """
-
-        # TODO response must be replaced with status
-        return {
-            'response': values_to_pack[0],
-            'status_code': values_to_pack[1],
-            'content': values_to_pack[2],
-            'url': values_to_pack[3]
-        }
-
-    def is_plan_status_request(self):
-        """Detects if we deal with a plan_status request."""
-
-        return self.query_type == 'plan_status'
-
-    def is_plan_info_request(self):
-        """Detects if we deal with a plan_info request."""
-
-        return self.query_type == 'plan_info'
-
-    def is_stop_plan_request(self):
-        """Detects if we deal with a stop_plan request."""
-
-        return self.query_type == 'stop_plan'
-
-    def is_query_queue_request(self):
-        """Detects if we deal with a query_queue request."""
-
-        return self.query_type == 'query_queue'
-
-    def is_download_artifact_request(self):
-        """Detects if we deal with a download_artifact request."""
-
-        return self.query_type == 'download_artifact'
-
-    def is_query_for_artifacts_request(self):
-        """Detects if we deal with a query_for_artifacts request."""
-
-        return self.query_type == 'query_for_artifacts'
-
-    def is_artifact_related_request(self):
-        """Detects if we deal with an artifact related request."""
-
-        return self.is_download_artifact_request() or self.is_query_for_artifacts_request()
-
-    @MethodDebug(debug=__debug_flag__)
-    def create_url(self):
-        """Creates the URL."""
-
-        if not self.query_type:
-            raise ValueError("No query type supplied!")
-
-        if self.is_plan_status_request():
-            return "{url}{build_key}.json?includeAllStates=true".format(
-                url=AtlassianUtils.BAMBOO_QUERY_PLAN_URL.format(self.server),
-                build_key=self.build_key,
-            )
-
-        if self.is_plan_info_request():
-            return "{url}{build_key}.json?max-results=10000".format(
-                url=AtlassianUtils.BAMBOO_PLAN_RESULTS_URL.format(self.server),
-                build_key=self.build_key,
-            )
-
-        if self.is_stop_plan_request():
-            return "{url}?planResultKey={build_key}".format(
-                url=AtlassianUtils.BAMBOO_STOP_PLAN_URL.format(self.server),
-                build_key=self.build_key
-            )
-
-        if self.is_query_queue_request():
-            return "{url}?expand=queuedBuilds".format(
-                url=AtlassianUtils.BAMBOO_LATEST_QUEUE_URL.format(self.server),
-            )
-
-        elif self.is_artifact_related_request():
-            return (
-                "{url}{url_query_string}".format(
-                    url=AtlassianUtils.BAMBOO_ARTIFACT_URL.format(
-                        self.server, self.build_key, self.stage, self.artifact
-                    ),
-                    url_query_string=self.url_query_string)
-            )
-
-        raise ValueError("Query type not supported!")
-
-    @MethodDebug(debug=__debug_flag__)
-    def get_artifacts_from_html_page(self, page_content):
-        """Parses HTML page in order to obtain the list of artifacts.
-        :param page_content: HTML page content
-        """
-
-        artifacts = list()
-
-        soup = BeautifulSoup(page_content, 'html.parser')
-        # All "<a href></a>" elements
-        a_html_elements = (soup.find_all('a'))
-
-        for a_html_elem in a_html_elements:
-            # File name, as href tag value
-            file_name = a_html_elem.extract().get_text()
-
-            # Do not add HREF value in case PAGE NOT FOUND error
-            if file_name != "Site homepage":
-                artifacts.append(file_name)
-
-            # TODO: add support to download artifacts from sub-dirs as well
-
-    @MethodDebug(debug=__debug_flag__)
-    def process_response(self, response, url, destination_file=None):
-        """Processes the response obtained after performing a request.
-        :param response: Response object
-        :param url: Request URL
-        :param destination_file: File where artifact will be downloaded in case of such a request
-        """
-
-        # Check HTTP response code
-        if response.status_code != 200:
-            return self.pack_response_to_client(values_to_pack=(False, response.status_code, response.json(), url))
-
-        artifacts = list()
-
-        try:
-            if self.is_query_for_artifacts_request():
-                response = requests.get(url)
-                artifacts = self.get_artifacts_from_html_page(response.content)
-
-            elif self.is_download_artifact_request():
-                response = requests.get(url)
-
-                with open(destination_file, 'wb') as f:
-                    f.write(response.content)
-
-            else:
-                # Get the JSON reply from the web page
-                response.encoding = "utf-8"
-                return self.pack_response_to_client(values_to_pack=(True, response.status_code, response.json(), url))
-
-        except ValueError as error:
-            raise ValueError("Error decoding JSON: {error}".format(error=error))
-        except Exception as exception:
-            raise Exception("Unknown exception: {exception}".format(exception=exception))
-
-        # Send response to client
-        response = self.pack_response_to_client(values_to_pack=(True, response.status_code, None, url))
-        if self.is_query_for_artifacts_request():
-            response['artifacts'] = artifacts
-
-        return response
-
-    @MethodDebug(debug=__debug_flag__)
-    def make_request(self, url, request_method=None, request_payload=None, destination_file=None):
-        """Creates the Bamboo request and process the response.
-        :param url: Request URL
-        :param request_method: GET/POST/...
-        :param request_payload: Extra details which are included into request body
-        :param destination_file: File where artifact will be downloaded in case of such a request
-        """
-
-        try:
-            response = requests.request(
-                request_method or 'GET',
-                url=url,
-                auth=requests.auth.HTTPBasicAuth(self.account.username,
-                                                 self.account.password),
-                headers=self.headers,
-                data=json.dumps(request_payload) if request_payload else None,
-                timeout=(
-                    ARTIFACT_REQUEST_DEFAULT_TIMEOUT
-                    if self.query_type in ['download_artifact', 'query_for_artifacts']
-                    else REQUEST_DEFAULT_TIMEOUT
-                ),
-                allow_redirects=False
-            )
-
-        except requests.RequestException as exception:
-            raise ValueError(
-                "Exception when requesting URL: '{url}'{os_line_sep}{exception}".format(
-                    url=url,
-                    os_line_sep=os.linesep,
-                    exception=exception
-                )
-            )
-
-        except (requests.ConnectionError, requests.HTTPError) as error:
-            raise ValueError(
-                "Error when requesting URL: '{url}'{os_line_sep}{error}".format(
-                    url=url,
-                    os_line_sep=os.linesep,
-                    error=error
-                )
-            )
-
-        except (requests.ConnectTimeout, requests.Timeout) as timeout:
-            raise ValueError(
-                "Timeout when requesting URL: '{url}'{os_line_sep}{timeout}".format(
-                    url=url,
-                    os_line_sep=os.linesep,
-                    timeout=timeout
-                )
-            )
-
-        except Exception as exception:
-            raise Exception(
-                "Unknown exception when requesting URL: '{url}'{os_line_sep}{exception}".format(
-                    url=url,
-                    os_line_sep=os.linesep,
-                    exception=exception
-                )
-            )
-
-        return self.process_response(response, url, destination_file=destination_file)
-
-    @MethodDebug(debug=__debug_flag__)
-    def trigger_build(self, server=None, plan_key=None, req_values=None):
+    def bamboo_trigger_build(self, server=None, plan_key=None, req_values=None):
         """Method to trigger a build using Bamboo API
 
         :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
@@ -1845,24 +1502,24 @@ class BambooUtils(AtlassianUtils):
             return {'content': "Incorrect input provided!"}
 
         # Execute all stages by default if no options received
-        request_payload = {'stage&executeAllStages': [True]}
+        payload = {'stage&executeAllStages': [True]}
         # req_values[0] = True/False
         if req_values:
-            request_payload['stage&executeAllStages'] = [req_values[0]]
+            payload['stage&executeAllStages'] = [req_values[0]]
 
             # Example
             # req_value[1] = {'bamboo.driver': "xyz", bamboo.test': "xyz_1"}
             # API supports a list as values
             for key, value in req_values[1].iteritems():
-                request_payload[key] = [value]
+                payload[key] = [value]
 
-        url = "{url}{plan_key}.json".format(url=AtlassianUtils.BAMBOO_TRIGGER_PLAN_URL.format(server), plan_key=plan_key)
+        url = "{url}{plan_key}.json".format(url=AtlassianUtils.BAMBOO_TRIGGER_PLAN_URL.format(server),
+                                            plan_key=plan_key)
         print("URL used to trigger build: '{url}'".format(url=url))
 
-        return self.make_request(url, request_method='POST', request_payload=request_payload)
+        return self.rest_post(url, payload)
 
-    @MethodDebug(debug=__debug_flag__)
-    def query_build(self, server=None, build_key=None, query_type=None):
+    def bamboo_query_build(self, server=None, build_key=None, query_type=None):
         """Method to query a plan build using Bamboo API.
 
         :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
@@ -1876,18 +1533,13 @@ class BambooUtils(AtlassianUtils):
         if not all((server, build_key, query_type)):
             return {'content': "Incorrect input provided!"}
 
-        self.server = server
-        self.build_key = build_key
-        self.query_type = query_type
-
-        url = self.create_url()
+        url = self.rest_create_url(server, build_key, query_type)
         print("URL used in query: '{url}'".format(url=url))
 
-        return self.make_request(url, request_method='GET')
+        return self.rest_get(url, query_type)
 
-    @MethodDebug(debug=__debug_flag__)
-    def query_build_for_artifacts(self, server=None, build_key=None, query_type=None,
-                                  stage=None, artifact=None, url_query_string=None):
+    def bamboo_query_build_for_artifacts(self, server=None, build_key=None, query_type=None,
+                                         stage=None, artifact=None, url_query_string=None):
         """Method to query Bamboo plan run for stage artifacts
 
         :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
@@ -1904,21 +1556,15 @@ class BambooUtils(AtlassianUtils):
         if not all((server, build_key, query_type, stage, artifact)):
             return {'content': "Incorrect input provided!"}
 
-        self.server = server
-        self.build_key = build_key
-        self.query_type = query_type
-        self.stage = stage
-        self.artifact = artifact
-        self.url_query_string = url_query_string or ''
+        url_query_string = url_query_string or ''
 
-        url = self.create_url()
+        url = self.rest_create_url(server, build_key, query_type, stage, artifact, url_query_string)
         print("URL used to query for artifacts: '{url}'".format(url=url))
 
-        return self.make_request(url, request_method='GET', query_type=query_type)
+        return self.rest_get(url, query_type)
 
-    @MethodDebug(debug=__debug_flag__)
-    def get_artifact(self, server=None, build_key=None, query_type=None,
-                     stage=None, artifact=None, url_query_string=None, destination_file=None):
+    def bamboo_get_artifact(self, server=None, build_key=None, query_type=None,
+                            stage=None, artifact=None, url_query_string=None, destination_file=None):
         """Method to download artifact from Bamboo plan
 
         :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
@@ -1936,20 +1582,12 @@ class BambooUtils(AtlassianUtils):
         if not all((server, build_key, query_type, stage, artifact, destination_file)):
             return {'content': "Incorrect input provided!"}
 
-        self.server = server
-        self.build_key = build_key
-        self.query_type = query_type
-        self.stage = stage
-        self.artifact = artifact
-        self.url_query_string = url_query_string or ''
-
-        url = self.create_url()
+        url = self.rest_create_url(server, build_key, query_type, stage, artifact, url_query_string or '')
         print("URL used to download artifact: '{url}'".format(url=url))
 
-        return self.make_request(url, request_method='GET', query_type=query_type, destination_file=destination_file)
+        return self.rest_get(url, query_type, destination_file=destination_file)
 
-    @MethodDebug(debug=__debug_flag__)
-    def stop_build(self, server=None, build_key=None, query_type=None):
+    def bamboo_stop_build(self, server=None, build_key=None, query_type=None):
         """Method to stop a running plan from Bamboo using Bamboo API
 
         :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
@@ -1963,17 +1601,12 @@ class BambooUtils(AtlassianUtils):
         if not all((server, build_key)):
             return {'content': "Incorrect input provided!"}
 
-        self.server = server
-        self.build_key = build_key
-        self.query_type = query_type
-
-        url = self.create_url()
+        url = self.rest_create_url(server, build_key, query_type)
         print("URL used to stop plan: '{url}'".format(url=url))
 
-        return self.make_request(url, request_method='POST')
+        return self.rest_post(url, query_type)
 
-    @MethodDebug(debug=__debug_flag__)
-    def kill_timeout_for_bamboo_build(self, kill_after_timeout=-1, server=None, build_key=None):
+    def bamboo_kill_build_after_timeout(self, kill_after_timeout=-1, server=None, build_key=None):
         """Method to watch an Job execution on Bamboo stage.
         If exceed the specified timeout, the method will stop the current plan
 
@@ -2005,7 +1638,7 @@ class BambooUtils(AtlassianUtils):
                 build_key=build_key, timeout=kill_timeout
             )
         )
-        kill_timer = threading.Timer(kill_timeout, self.stop_build, [server, build_key, "stop_plan"])
+        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [server, build_key, "stop_plan"])
         kill_timer.start()
 
         return kill_timer
@@ -2038,8 +1671,7 @@ class BambooUtils(AtlassianUtils):
 
         request_url = self.BAMBOO_GET_PLAN_BRANCHES_INFO.format(plan)
 
-        response = RESTUtils.get(self.rest_service_configuration, request_url,
-                                 self.account_info.user_account, self.account_info.pwd)
+        response = self.rest_get(request_url)
 
         # check whether branch is configured in the plan
         branch_key = None
@@ -2067,8 +1699,7 @@ class BambooUtils(AtlassianUtils):
             if timeout and time.time() - start > timeout:
                 raise Exception("Triggered build took longer than the configured time {0}".format(timeout))
 
-            response = RESTUtils.get(self.rest_service_configuration, build_url,
-                                     self.account_info.user_account, self.account_info.pwd)
+            response = self.rest_get(build_url)
             build_status = json.loads(response.read())["buildState"]
             if build_status != "Unknown":
                 break
@@ -2104,11 +1735,7 @@ class BambooUtils(AtlassianUtils):
             else:
                 request_data[key] = plan_settings.bamboo_build_args[key]
 
-        response = RESTUtils.post(self.rest_service_configuration,
-                                  request_url,
-                                  self.account_info.user_account,
-                                  self.account_info.pwd,
-                                  request_data)
+        response = self.rest_post(request_url, payload=request_data)
         Utils.print_with_header("Build Triggered: {0}".format(request_url))
 
         if wait_completion:
@@ -2468,19 +2095,19 @@ class BambooSettings(AutomationConfiguration):
 
     @property
     def branches(self):
-        """Gets the current branches"""
+        """Get the current branches"""
 
         return self._branches
 
     @property
     def branch(self):
-        """Gets the main (first) configured branch"""
+        """Get the main (first) configured branch"""
 
         return self._branch
 
     @property
     def results_url(self):
-        """Gets the results url"""
+        """Get the results url"""
 
         return self.__results_url
 
@@ -2616,8 +2243,7 @@ class PullRequestTriggerJob(AutomationJob):
     def __init__(self):
 
         self.automation_configuration = AutomationConfiguration.get_static_instance()
-        self.bamboo_utils = BambooUtils(self.automation_configuration.project)
-        self.bitbucket_utils = BitbucketUtils(self.automation_configuration.project)
+        self.utils = AtlassianUtils(self.automation_configuration.project)
         self.state = PullRequestTriggerJob.PRTriggerState()
         self.target_build_plans = self.get_target_build_plans()
 
@@ -2653,7 +2279,7 @@ class PullRequestTriggerJob(AutomationJob):
             # Subclasses provide the bamboo plan key
             plan_key = self.get_build_plan_key(source_branch, target_branch)
             # Trigger build
-            self.bamboo_utils.bamboo_trigger_build_plan(plan_key)
+            self.utils.trigger_build_plan(plan_key)
         except Exception:
             return False
         else:
@@ -2663,7 +2289,7 @@ class PullRequestTriggerJob(AutomationJob):
         """Check all existing pull requests and trigger build plans as necessary."""
 
         # Retrieve all current open pull requests
-        current_pull_requests = self.bitbucket_utils.bitbucket_get_all_pull_requests(
+        current_pull_requests = self.utils.bitbucket_get_all_pull_requests(
             self.automation_configuration.repo, 'OUTGOING', 'OPEN')
 
         print('The following branch mapping has been read: {0}'.format(self.target_build_plans))
