@@ -13,16 +13,19 @@ class RESTServiceConfiguration(object):
     """
     Abstraction for a REST service configuration
     """
+
     def __init__(self, __auth_context):
         """
         :param __auth_context: a SSLContext instance used to authenticate to the REST service for performing REST calls
         """
+
         self.__auth_context = __auth_context
 
     def get_auth_context(self):
         """
         :return: the REST service authentication context
         """
+
         return self.__auth_context
 
 
@@ -32,6 +35,7 @@ class RESTUtilsPy2:
     """
 
     def __init__(self):
+
         pass
 
     @staticmethod
@@ -43,6 +47,7 @@ class RESTUtilsPy2:
         :param password: REST service password
         :return: The request object
         """
+
         try:
             request_ = urllib2.Request(url=uri)
             request_.add_header('Content-Type', 'application/json')
@@ -63,6 +68,7 @@ class RESTUtilsPy2:
         :param password: REST server password
         :return: REST call response object
         """
+
         try:
             return urllib2.urlopen(url=RESTUtils.build_request(uri, user, password),
                                    context=rest_service_configuration.get_auth_context())
@@ -81,6 +87,7 @@ class RESTUtilsPy2:
         :param payload: POST call payload
         :return: REST call response object
         """
+
         try:
             return urllib2.urlopen(url=RESTUtils.build_request(uri, user, password),
                                    data=json.dumps(payload),
@@ -104,6 +111,7 @@ class RESTUtilsPy2:
         :param payload: POST call payload
         :return: REST call response object
         """
+
         request_ = RESTUtils.build_request(uri, user, password)
 
         # urllib2 supports only GET and POST requests, so we override its get_method in order to be able
@@ -135,6 +143,7 @@ class RESTUtilsPy3:
         :param password: REST service password
         :return: The request object
         """
+
         try:
             request_ = request.Request(url=uri)
             auth = base64.b64encode('{0}:{1}'.format(user, password)).replace('\n', '')
@@ -154,6 +163,7 @@ class RESTUtilsPy3:
         :param password: REST server password
         :return: REST call response object
         """
+
         try:
             return request.urlopen(url=RESTUtilsPy3.build_request(uri, user, password),
                                    context=rest_service_configuration.get_auth_context())
@@ -172,6 +182,7 @@ class RESTUtilsPy3:
         :param payload: POST call payload
         :return: REST call response object
         """
+
         try:
             return request.urlopen(url=RESTUtilsPy3.build_request(uri, user, password),
                                    data=json.dumps(payload),
@@ -195,6 +206,7 @@ class RESTUtilsPy3:
         :param payload: POST call payload
         :return: REST call response object
         """
+
         request_ = RESTUtilsPy3.build_request(uri, user, password)
 
         # urllib supports only GET and POST requests, so we override its get_method in order to be able
@@ -220,5 +232,5 @@ class RESTUtils:
 
 if int(current_python_version[0]) >= 3:
     RESTUtils = RESTUtilsPy3
-else: # Python 2.7
+else:  # Python 2.7
     RESTUtils = RESTUtilsPy2

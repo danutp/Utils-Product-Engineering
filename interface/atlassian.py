@@ -259,6 +259,7 @@ class AtlassianUtils(object):
         :param rest_service_configuration: The configuration of the REST service used for any Atlassian operations
         via REST calls. By default is a TLS based authentication REST service
         """
+
         self.jira_project_key = jira_project_key
         self.account_info = account_info
         self.rest_service_configuration = rest_service_configuration
@@ -272,6 +273,7 @@ class AtlassianUtils(object):
         :param default_value:  Returned in case environment variable doesn't exist. Default is None.
         :return: The value of the environment variable
         """
+
         environment_variable_value = Utils.get_env(
             '{0}{1}'.format(env_variable_prefix, key), default_value=default_value)
         return environment_variable_value.strip() if environment_variable_value else environment_variable_value
@@ -331,9 +333,10 @@ class AtlassianUtils(object):
         matching a given value.
         :param storage: Storage to seek in
         :param key: Matching key
-        :param value: Mathing value
+        :param value: Matching value
         :return:
         """
+
         for item in storage:
             if value in item[key]:
                 if 'children' in item:
@@ -349,6 +352,7 @@ class AtlassianUtils(object):
         :param uri: REST service URI
         :return: REST call response object
         """
+
         return RESTUtils.get(self.rest_service_configuration,
                              uri,
                              self.account_info.user_account,
@@ -361,6 +365,7 @@ class AtlassianUtils(object):
         :param payload: Payload used by the call
         :return: REST call response object
         """
+
         return RESTUtils.post(self.rest_service_configuration,
                               uri,
                               self.account_info.user_account,
@@ -373,6 +378,7 @@ class AtlassianUtils(object):
         :param payload: Payload used by the call
         :return: REST call response object
         """
+
         return RESTUtils.put(self.rest_service_configuration,
                              uri,
                              self.account_info.user_account,
@@ -382,6 +388,7 @@ class AtlassianUtils(object):
 class JiraUtils(AtlassianUtils):
 
     def __init__(self, jira_project_key):
+
         super(JiraUtils, self).__init__(jira_project_key)
 
     @staticmethod
@@ -391,6 +398,7 @@ class JiraUtils(AtlassianUtils):
         :param jql_result: the JQL execution result
         :return:
         """
+
         result = []
         for item in jql_result:
             result.append(item['key'])
@@ -404,10 +412,11 @@ class JiraUtils(AtlassianUtils):
         :param fields_values_dict: dictionary containing <field, value> tuples
         :return: The formatted payload to be used in the field modification using REST API
         """
+
         payload = dict()
         payload['fields'] = {}
-        for key in fields_values_dict.keys():
-            payload['fields'][key] = fields_values_dict[key]
+        for key, value in fields_values_dict.items():
+            payload['fields'][key] = value
         return payload
 
     @staticmethod
@@ -418,6 +427,7 @@ class JiraUtils(AtlassianUtils):
         :param value: field value
         :return: The formatted payload to be used in the field modification using REST API
         """
+
         return JiraUtils.jira_generate_defect_fields_custom_values(dict([(field, value)]))
 
     def jira_generate_defect_field_allowed_value(self, jira_id, field, value):
@@ -428,6 +438,7 @@ class JiraUtils(AtlassianUtils):
         :param value: field value
         :return: The payload to be used with a REST API call in order to set the JIRA defect field value
         """
+
         uri = AtlassianUtils.JIRA_DEFECT_EDIT_INFO_URL.format(jira_id)
         response = self.rest_get(uri)
         data = json.loads(response.read())
@@ -448,7 +459,8 @@ class JiraUtils(AtlassianUtils):
         [as defined in the issue fields metadata]
         :return: The response code of the REST API request
         """
-        if custom is True:
+
+        if custom:
             payload = JiraUtils.jira_generate_defect_field_custom_value(field, value)
         else:
             payload = self.jira_generate_defect_field_allowed_value(jira_id, field, value)
@@ -464,6 +476,7 @@ class JiraUtils(AtlassianUtils):
         :param to_status: Status to which to transition to
         :return: The transition ID used to transition to the given status, or None if no such transition is defined
         """
+
         uri = AtlassianUtils.JIRA_DEFECT_TRANSITIONS_INFO_EXTENDED_URL.format(jira_id)
         response = self.rest_get(uri)
         data = json.loads(response.read())
@@ -487,6 +500,7 @@ class JiraUtils(AtlassianUtils):
         This is the payload to use for the update operation
         :return: REST call error code or None if the transition is not allowed
         """
+
         payload = dict()
         payload['transition'] = {}
         transition_id = self.jira_get_transition_id(jira_id, to_status)
@@ -507,6 +521,7 @@ class JiraUtils(AtlassianUtils):
         :param jira_id: JIRA ID of whose status to seek for
         :return: The JIRA ID status
         """
+
         return self.jira_get_field_value_by_name(jira_id, 'status')
 
     def jira_get_field_value_by_name(self, jira_id, field_id):
@@ -516,6 +531,7 @@ class JiraUtils(AtlassianUtils):
         :param field_id: Field to retrieve the value of
         :return: name key from the value (dict) of the field
         """
+
         return self.jira_get_field_value(jira_id, field_id)['name']
 
     def jira_get_field_value(self, jira_id, field_id):
@@ -524,6 +540,7 @@ class JiraUtils(AtlassianUtils):
         :param jira_id: JIRA ID
         :param field_id: Field to retrieve the value of
         """
+
         uri = AtlassianUtils.JIRA_DEFECT_INFO_URL.format(jira_id)
         response = self.rest_get(uri)
         data = json.loads(response.read())
@@ -548,7 +565,7 @@ class JiraUtils(AtlassianUtils):
 
     def jira_is_user_assignable(self, user_id):
         """
-        Determines is a given user id is assignable [can be used to fill in JIRA defect fields]
+        Determines if a given user id is assignable [can be used to fill in JIRA defect fields]
         in the context of the current project
         :param user_id: JIRA user id
         :return: True if the user is assignable, False otherwise
@@ -577,13 +594,14 @@ class JiraUtils(AtlassianUtils):
         :param max_results: Maximum amount of results to be returned, if None all results will be returned
         :return: The JSON result of the JQL query
         """
+
         payload = {'jql': query}
-        if max_results is not None:
+        if max_results:
             payload['maxResults'] = '{0}'.format(max_results)
 
         response = self.rest_post(AtlassianUtils.JIRA_QUERY_URL, payload)
         data = json.loads(response.read())
-        if max_results is not None:
+        if max_results:
             return data['issues']
 
         total_results = int(data['total'])
@@ -604,6 +622,7 @@ class JiraUtils(AtlassianUtils):
         :param devices: A list of devices to which to match the Fix Version(s) value of the Resolved JIRA defects
         :return: a map <indirectly_fixed_jira_defect, list of referenced jira_defects in resolution text>
         """
+
         filters = dict()
         filters['status'] = ['Resolved']
         filters['resolution'] = ['"Fixed No Action Taken"']
@@ -664,6 +683,7 @@ class JiraUtils(AtlassianUtils):
         :param statuses: Defects statuses filter, based on which to filter the JIRA defects
         :return: The list of JIRA defects info
         """
+
         return self.jira_get_defects_by_filter('status', statuses)
 
     def jira_get_defects_by_filter(self, filter_name, filter_values):
@@ -673,8 +693,10 @@ class JiraUtils(AtlassianUtils):
         :param filter_values: Filter values
         :return: The list of filtered JIRA defects info
         """
+
         filters = dict()
         filters[filter_name] = filter_values
+
         return self.jira_get_defects_by_filters(filters)
 
     def jira_get_defects_by_filters(self, filters):
@@ -685,6 +707,7 @@ class JiraUtils(AtlassianUtils):
         The filters will be ANDed
         :return: The list of filtered JIRA defects info
         """
+
         query = 'project = {0}'.format(self.jira_project_key)
 
         f = dict(filters)
@@ -748,6 +771,7 @@ class BitbucketUtils(AtlassianUtils):
         :param file_path: path of the file in repo's context
         :return: The content of the file. Exception is raised in case file is binary
         """
+
         uri = AtlassianUtils.BITBUCKET_GET_FILE_URL.format(repo_slug, repo_key, file_path)
 
         response = self.rest_get(uri)
@@ -829,6 +853,7 @@ class BitbucketUtils(AtlassianUtils):
         :param check_tag: Checks if the tag already exists and raises an Exception if so
         :param message: A message relevant for the tag
         """
+
         print(r'Tagging the {0}\{1} branch with tag {2}'.format(repo, branch, tag))
 
         if check_tag is True and self.bitbucket_get_tag(repo, tag) is not None:
@@ -925,6 +950,7 @@ class BitbucketUtils(AtlassianUtils):
         :param tag: Tag which to seek the commit after
         :return: The next commit after a tag or None if such commit does not exist
         """
+
         try:
             return self.bitbucket_get_next_commit(repo, tag.latest_commit)
         except:  # noqa: E722
@@ -940,6 +966,7 @@ class BitbucketUtils(AtlassianUtils):
         :param repo: Name of the BITBUCKET repository where to seek the commit
         :return: The next commit after the latest  tag or None if such commit does not exist
         """
+
         try:
             latest_tag = self.bitbucket_get_latest_tag(repo)
             return self.bitbucket_get_next_commit_after_tag(repo, latest_tag)
@@ -965,6 +992,7 @@ class BitbucketUtils(AtlassianUtils):
 
         :return: List of changed files with filters [if defined] applied
         """
+
         try:
             change_set = []
             changes = []
@@ -1016,6 +1044,7 @@ class BitbucketUtils(AtlassianUtils):
         :param args: list of arguments matching the arguments number of `bitbucket_get_pull_request_activities`
         :return: the pull request activities.
         """
+
         pr = args[0]
         repo = args[1]
 
@@ -1028,6 +1057,7 @@ class BitbucketUtils(AtlassianUtils):
         :param args: list of arguments matching the arguments number of `bitbucket_get_pull_request_change_set`
         :return: the pull request in case it matches the change set filters, None otherwise.
         """
+
         pr = args[0]
         repo = args[1]
         branch = args[2]
@@ -1048,6 +1078,7 @@ class BitbucketUtils(AtlassianUtils):
         :param branch: Branch to retrieve the commits from
         :return: List of changed files
         """
+
         try:
             files_changed = []
             next_page_start = 0
@@ -1084,6 +1115,7 @@ class BitbucketUtils(AtlassianUtils):
         :param branch: Name of (source) branch
         :return: List of branch names targeted for merging, None if no pull request is found
         """
+
         try:
             pull_requests = self.bitbucket_get_pull_requests(repo, branch, 'OUTGOING', 'OPEN')
             if not pull_requests:
@@ -1154,6 +1186,7 @@ class BitbucketUtils(AtlassianUtils):
         :param status: MERGED, OPEN
         :return: The pull requests dictionary
         """
+
         next_page_start = 0
         pull_requests = []
         while True:
@@ -1323,6 +1356,7 @@ class BitbucketUtils(AtlassianUtils):
         :param pull_request: pull request to analyze
         :return: Pull request is compliant with moderator rules
         """
+
         reviewers = dict()
         for r in pull_request['reviewers']:
             reviewers[r['user']['name']] = r['user']['displayName']
@@ -1440,6 +1474,7 @@ class BitbucketUtils(AtlassianUtils):
         :param status: pull request status
         :return: True if full compliance with moderator rules, False otherwise
         """
+
         print('Checking if the pull requests from branch {0}/{1} have a moderator properly set'.format(repo, branch))
         pull_requests = self.bitbucket_get_pull_requests(repo, branch, direction, status)
         if not pull_requests:
@@ -1462,6 +1497,7 @@ class BitbucketUtils(AtlassianUtils):
         :param status: pull request status
         :return: tasks per pull requests map
         """
+
         tasks = dict()
         pull_requests = self.bitbucket_get_pull_requests(repo, branch, direction, status)
         for pr in pull_requests:
@@ -1473,8 +1509,8 @@ class BitbucketUtils(AtlassianUtils):
 class BambooUtils(AtlassianUtils):
     """Bamboo utils class."""
 
-    def __init__(self):
-        super(AtlassianUtils, self).__init__()
+    def __init__(self, jira_project_key):
+        super(BambooUtils, self).__init__(jira_project_key)
         self.__account = BambooAccount()
         self.__server = None
         self.__stage = None
@@ -1982,6 +2018,7 @@ class BambooUtils(AtlassianUtils):
         :param branch_name: name of branch
         :return branch details
         """
+
         # noinspection PyBroadException
         try:
             uri = AtlassianUtils.BAMBOO_PLAN_BRANCH_REQUEST_URL.format(plan_key, branch_name)
@@ -2024,6 +2061,7 @@ class BambooUtils(AtlassianUtils):
         :param timeout: Maximum build time for triggered build until the build is considered to be failed, in seconds,
         if 0, the build will be left to run indefinitely
         """
+
         start = time.time()
         while True:
             if timeout and time.time() - start > timeout:
@@ -2052,6 +2090,7 @@ class BambooUtils(AtlassianUtils):
         :param timeout: Maximum build time for triggered build until the build is considered to be failed, in seconds,
         if 0, the build will be left to run indefinitely
         """
+
         request_url = self.BAMBOO_QUEUE_POST_REQUEST_URL.format(
             self.bamboo_get_branch_key_by_name(plan_settings.plan, plan_settings.plan_branch) + ".json?")
         if plan_settings.build_args:
@@ -2080,6 +2119,7 @@ class BambooUtils(AtlassianUtils):
         Post the specified build to the Bamboo build queue
         :param build_plan_key: Build plan key
         """
+
         print('Posting build plan to Bamboo queue: https://bamboo1.sw.nxp.com/browse/{0}'.format(build_plan_key))
 
         uri = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(build_plan_key)
@@ -2102,6 +2142,7 @@ class AutomationConfiguration(object):
         :param plan_type: The plan type of the automation system
         :return: An AutomationConfiguration instance
         """
+
         if not AutomationConfiguration.static_instance:
             AutomationConfiguration.static_instance = AutomationConfiguration(plan_type)
 
@@ -2109,14 +2150,15 @@ class AutomationConfiguration(object):
 
     @staticmethod
     def initialize_groups(plan_type):
+        """Return the tuple formed by repo name, slug and repo suffix
+           e.g. for the ssh://git@bitbucket.sw.nxp.com/artd/base.git repository ('/artd/', 'base', '.git') would be
+           the resulted tuple"""
 
         url = AtlassianUtils.get_env_var('planRepository_repositoryUrl', plan_type)
 
         groups = re.search('(\/[^\.]*\/)([^\/]*)(\.git)', url).groups()
         if groups is None:
             raise Exception('Repository URL Bamboo variable does not have the expected format: {0}'.format(url))
-
-        groups = sorted(set(groups), key=groups.index)  # group order matters, therefore don't alter it
 
         if len(groups) != 3:  # check that we're indeed dealing with an appropriate Bamboo variable
             raise Exception('Repo and project cannot be decoded from Bamboo variable {0}'.format(url))
@@ -2215,99 +2257,121 @@ class AutomationConfiguration(object):
     @property
     def plan_type(self):
         """Get the plan type."""
+
         return self._plan_type
 
     @property
     def repo(self):
         """Get the repository."""
+
         return self._repo
 
     @property
     def project(self):
         """Get the project."""
+
         return self._project
 
     @property
     def agent_id(self):
         """Get the agent ID."""
+
         return self._agent_id
 
     @property
     def job(self):
         """Get the job name."""
+
         return self._job
 
     @property
     def product_name(self):
         """Get the product name."""
+
         return self._product_name
 
     @property
     def job_short_key(self):
         """Get the job key."""
+
         return self._job_short_key
 
     @property
     def working_dir(self):
         """Get the Bamboo plan working directory passed as Bamboo variable."""
+
         return self._working_dir
 
     @property
     def plan_name(self):
         """Get the plan name."""
+
         return self._plan_name
 
     @property
     def short_plan_name(self):
         """Get the short plan name."""
+
         return self._short_plan_name
 
     @property
     def plan_branch_name(self):
         """Get the branch name."""
+
         return self._plan_branch_name
 
     @property
     def plan_key(self):
         """Get the plan key."""
+
         return self._plan_key
 
     @property
     def stage_key(self):
         """Get the stage key."""
+
         return self._stage_key
 
     @property
     def plan_build_number(self):
         """Get the plan build number."""
+
         return self._plan_build_number
 
     @property
     def build_key(self):
         """Get the build key."""
+
         return self._build_key
 
     @property
     def suppress_errors(self):
         """Suppress errors."""
+
         return self._suppress_errors
 
     @property
     def debug_location(self):
         """Get the standardized debugging path for all releases."""
+
         return self._debug_location
 
     @property
     def debug_mode(self):
         """Debug mode."""
+
         return self._debug_mode
 
     @property
     def keep_shared_artifacts_in_case_of_error_for_jobs(self):
+        """Get the the list of shared artifacts kept in case of error"""
+
         return self._keep_shared_artifacts_in_case_of_error_for_jobs
 
     @property
     def keep_plan_shared_artifacts(self):
+        """The boolean value configured for keeping the plan shared artifacts"""
+
         return self._keep_plan_shared_artifacts
 
     @staticmethod
@@ -2315,15 +2379,14 @@ class AutomationConfiguration(object):
         """
         Abstract method that must be implemented in the classes that derives this class
         """
+
         raise NotImplementedError('Cannot call method {0} of abstract class {1} instance'
                                   .format(inspect.currentframe().f_code.co_name, 'AutomationConfiguration'))
 
     @staticmethod
     def get_content_from_config_file(config_file=None):
         """Read the config config file
-
         :param config_file: Configuration file [string]
-
         :return: file content [dict]
                  None, no config file supplied
         :raise ValueError
@@ -2355,8 +2418,13 @@ class BambooSettings(AutomationConfiguration):
     """
     Bamboo build settings
     """
+
     @staticmethod
     def get_branches():
+        """Return the list of branches configured for current plan
+        :return The list of branches
+        """
+
         branches = []
         index = 1
         while True:
@@ -2400,14 +2468,20 @@ class BambooSettings(AutomationConfiguration):
 
     @property
     def branches(self):
+        """Gets the current branches"""
+
         return self._branches
 
     @property
     def branch(self):
+        """Gets the main (first) configured branch"""
+
         return self._branch
 
     @property
     def results_url(self):
+        """Gets the results url"""
+
         return self.__results_url
 
     @property
@@ -2454,6 +2528,7 @@ class JIRASchema(object):
         :param name: JIRA defect field name a it appears in web UI
         :return:The JIRA defect field ID as defined by the schema
         """
+
         if name in self.fields.keys():
             return self.fields[name]
         else:
@@ -2465,6 +2540,7 @@ class JIRASchema(object):
         :param field_id: JIRA defect field ID as defined by the schema
         :return:The JIRA defect field name as it appears in web UI
         """
+
         for key in self.fields.keys():
             if self.fields[key] == field_id:
                 return key
@@ -2480,14 +2556,16 @@ class PullRequestTriggerJob(AutomationJob):
     class PRTriggerState(object):
         """
         Helper class to maintain the state related to triggering builds for pull-requests
-        State is persisted in a shared location database
+        State is recorded in a shared location database
         """
+
         DB_PATH = os.path.join(Utils.get_shared_resources_location(), 'Builds', 'S32SDK', 'pull_request_monitoring',
                                'trigger_state.db')
 
         def __init__(self):
             """State is maintained in the database as TABLE (PullRequestId, CommitId)
             signifying the most recent commit for which a build has been triggered for the specified pull request"""
+
             self.con = sqlite3.connect(self.DB_PATH)
 
         def get_known_pull_requests(self):
@@ -2495,6 +2573,7 @@ class PullRequestTriggerJob(AutomationJob):
             Retrieve all known pull requests
             :return: List of pull request ids
             """
+
             with self.con:
                 cur = self.con.cursor()
                 cur.execute('SELECT * FROM Triggers')
@@ -2506,6 +2585,7 @@ class PullRequestTriggerJob(AutomationJob):
             :param pr_id: pull request id
             :return: last commit
             """
+
             with self.con:
                 cur = self.con.cursor()
                 cur.execute('SELECT CommitId FROM Triggers WHERE PullRequestId=?', (pr_id,))
@@ -2517,6 +2597,7 @@ class PullRequestTriggerJob(AutomationJob):
             Stop tracking the specified pull request
             :param pr_id: pull request id
             """
+
             with self.con:
                 cur = self.con.cursor()
                 cur.execute('DELETE FROM Triggers WHERE PullRequestId=?', (pr_id,))
@@ -2527,13 +2608,16 @@ class PullRequestTriggerJob(AutomationJob):
             :param pr_id: pull request id
             :param commit: commit id
             """
+
             with self.con:
                 cur = self.con.cursor()
                 cur.execute('REPLACE INTO Triggers VALUES(?, ?)', (pr_id, commit))
 
     def __init__(self):
+
         self.automation_configuration = AutomationConfiguration.get_static_instance()
-        self.utils = AtlassianUtils(self.automation_configuration.project)
+        self.bamboo_utils = BambooUtils(self.automation_configuration.project)
+        self.bitbucket_utils = BitbucketUtils(self.automation_configuration.project)
         self.state = PullRequestTriggerJob.PRTriggerState()
         self.target_build_plans = self.get_target_build_plans()
 
@@ -2542,6 +2626,7 @@ class PullRequestTriggerJob(AutomationJob):
         Retrieve the key of the plan that needs to be built based on the pull request's source and destination branches
         This method needs to be overridden in derived classes.
         """
+
         raise NotImplementedError('Cannot call method {0} of abstract class {1} instance'
                                   .format(inspect.currentframe().f_code.co_name, self.__class__.__name__))
 
@@ -2551,6 +2636,7 @@ class PullRequestTriggerJob(AutomationJob):
         associated build plans. File is kept external in a source control.
         This method needs to be overridden in derived classes.
         """
+
         raise NotImplementedError('Cannot call method {0} of abstract class {1} instance'
                                   .format(inspect.currentframe().f_code.co_name, self.__class__.__name__))
 
@@ -2567,7 +2653,7 @@ class PullRequestTriggerJob(AutomationJob):
             # Subclasses provide the bamboo plan key
             plan_key = self.get_build_plan_key(source_branch, target_branch)
             # Trigger build
-            self.utils.trigger_build_plan(plan_key)
+            self.bamboo_utils.bamboo_trigger_build_plan(plan_key)
         except Exception:
             return False
         else:
@@ -2577,7 +2663,7 @@ class PullRequestTriggerJob(AutomationJob):
         """Check all existing pull requests and trigger build plans as necessary."""
 
         # Retrieve all current open pull requests
-        current_pull_requests = self.utils.bitbucket_get_all_pull_requests(
+        current_pull_requests = self.bitbucket_utils.bitbucket_get_all_pull_requests(
             self.automation_configuration.repo, 'OUTGOING', 'OPEN')
 
         print('The following branch mapping has been read: {0}'.format(self.target_build_plans))
@@ -2620,6 +2706,7 @@ class BambooPlanSettings(object):
         :param bamboo_build_args: Dictionary containing the bamboo build variables
         :param bamboo_url: string containing URL to the bamboo server (i.e. 'https://bamboo1.sw.nxp.com/')
         """
+
         self.plan = plan
         self.plan_branch = plan_branch
         self.build_args = build_args
@@ -2645,7 +2732,7 @@ class RemoteAPI:
         # Type for return value
         self.result_type = namedtuple('result_type', ['success', 'info'])
 
-    def make_request(self, request_url, headers=HEADERS, method=requests.get, data=None, retries=int()):
+    def make_request(self, request_url, headers=None, method=requests.get, data=None, retries=int()):
         """Make request
         :param request_url - url where request should be done,
         :param headers - headers for requests,
@@ -2654,6 +2741,8 @@ class RemoteAPI:
         :param retries - how many retries with delay should be done for sending request
         :return type - namedtuple(status_code, response_text)
         :return status_code - status code, response_text text of response"""
+
+        headers = headers or HEADERS
 
         try:
             response = method(request_url, auth=self.auth, timeout=self.request_timeout, headers=headers, data=data)
