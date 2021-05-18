@@ -110,6 +110,7 @@ class RESTUtilsPy2:
             print('REST GET resulted in exception upon calling the following URI: {0}'.format(uri))
             raise e
 
+
     @staticmethod
     def post(rest_service_configuration, uri, user, password, payload):
         """
