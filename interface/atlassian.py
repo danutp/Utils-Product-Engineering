@@ -6,7 +6,6 @@ This script contains the interface over Atlassian Rest API: JIRA, Bitbucket, Bam
 
 
 from __future__ import division  # enables floating point division
-import _ssl
 import base64
 import inspect
 import itertools
@@ -22,15 +21,13 @@ import threading
 from bs4 import BeautifulSoup
 from collections import defaultdict, namedtuple
 from distutils import util
-from helper.git import GitUtils
 from helper.pull_request import ReviewStatistics
-from helper.rest import RESTServiceConfiguration, RESTUtils, AtlassianAccount
+from helper.rest import RESTUtils
 from helper.utils import Utils
 from multiprocessing.pool import ThreadPool
 from multiprocessing import cpu_count
 from random import randrange
 from service import AutomationJob
-from ssl import SSLContext
 from time import sleep
 from tldextract import extract
 
@@ -70,6 +67,28 @@ class BitbucketTag(object):
     def __init__(self, name, latest_commit):
         self.name = name
         self.latest_commit = latest_commit
+
+
+class AtlassianAccount(object):
+    def __init__(self):
+        self.__username, self.__password = self.__load_credentials()
+
+    @property
+    def username(self):
+        return self.__username
+
+    @property
+    def password(self):
+        return self.__password
+
+    @staticmethod
+    def __load_credentials():
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               'atlassian',
+                               'auth_credentials.json')) as fd:
+            credentials = json.loads(fd.read())
+
+        return credentials['username'], base64.b64decode(credentials['password'])
 
 
 class AtlassianUtils(object):
@@ -197,27 +216,37 @@ class AtlassianUtils(object):
     BAMBOO_LATEST_QUEUE_URL = r'https://{0}.sw.nxp.com/rest/api/latest/queue.json'
     BAMBOO_ARTIFACT_URL = r'https://{0}.sw.nxp.com/browse/{1}/artifact/{2}/{3}/'
 
-    #
-    # Each Bamboo variable is visible as an environment variable.
-    # The environment variable name is obtained from the Bamboo variable name prefixed with this string
-    #
+    class BambooQueryTypes:
+
+        def __init__(self):
+            pass
+
+        TRIGGER_PLAN_QUERY = 0
+        STOP_PLAN_QUERY = 1
+        RESULTS_QUERY = 2
+        PLAN_QUERY = 3
+        QUEUE_QUERY = 4
+        ARTIFACT_QUERY = 5
+
+        KNOWN_QUERY_TYPES = range(6)
 
     def __init__(self,
                  jira_project_key,
-                 account_info=AtlassianAccount(),
-                 rest_service_configuration=RESTServiceConfiguration(SSLContext(_ssl.PROTOCOL_TLSv1_2))):
+                 account_info=AtlassianAccount()):
 
         """
         :param jira_project_key: the unique JIRA project key
         :param account_info: The account info to use for any Atlassian, REST call based operations
-        By default it's a service account
-        :param rest_service_configuration: The configuration of the REST service used for any Atlassian operations
-        via REST calls. By default is a TLS based authentication REST service
+               By default it's a service account
         """
 
         self.jira_project_key = jira_project_key
         self.account_info = account_info
-        self.rest_service_configuration = rest_service_configuration
+
+    #
+    # Each Bamboo variable is visible as an environment variable.
+    # The environment variable name is obtained from the Bamboo variable name prefixed with this string
+    #
 
     @staticmethod
     def get_env_var(key, env_variable_prefix='bamboo_', default_value=None):
@@ -301,62 +330,110 @@ class AtlassianUtils(object):
                 return [item]
         return None
 
-    def rest_get(self, uri, query_type=None, destination_file=None):
+    @staticmethod
+    @RESTUtils.pack_response_to_client
+    def rest_get(uri, headers=None, timeout=None, destination_file=None):
         """
         Runs a GET REST call on JIRA, Bitbucket or Bamboo
         :param uri: REST service URI
-        :param query_type: query type
+        :param headers: The headers to be included in query
+        :param timeout: The timeout to be used when waiting for response
         :param destination_file: File where artifact will be downloaded in case of such a request
         :return: REST call response object
         """
 
-        return RESTUtils.get(self.rest_service_configuration,
-                             uri,
-                             self.account_info.username,
-                             self.account_info.password,
-                             query_type=query_type,
+        if destination_file:
+            return RESTUtils.download(uri, timeout=timeout, destination=destination_file)
+
+        return RESTUtils.get(uri,
+                             headers=headers,
+                             auth=AtlassianAccount(),
+                             timeout=timeout,
                              destination_file=destination_file)
 
-    def rest_post(self, uri, query_type=None, payload=None):
+    @staticmethod
+    @RESTUtils.pack_response_to_client
+    def rest_post(uri, headers=None, timeout=None, payload=None):
         """
         Runs a POST REST call on JIRA
         :param uri: REST service URI
-        :param query_type: query_type
+        :param headers: The headers to be included in query
+        :param timeout: The timeout to be used when waiting for response
         :param payload: Payload used by the call
         :return: REST call response object
         """
 
-        return RESTUtils.post(self.rest_service_configuration,
-                              uri,
-                              self.account_info.username,
-                              self.account_info.password,
-                              query_type=query_type,
+        return RESTUtils.post(uri,
+                              headers=headers,
+                              auth=AtlassianAccount(),
+                              timeout=timeout,
                               payload=payload)
 
-    def rest_put(self, uri, query_type=None, payload=None):
+    @staticmethod
+    @RESTUtils.pack_response_to_client
+    def rest_put(uri, headers=None, timeout=None, payload=None):
         """
         Runs a PUT REST call on JIRA
         :param uri: REST service URI
-        :param query_type: query_type
+        :param headers: The headers to be included in query
+        :param timeout: The timeout to be used when waiting for response
         :param payload: Payload used by the call
         :return: REST call response object
         """
 
-        return RESTUtils.put(self.rest_service_configuration,
-                             uri,
-                             self.account_info.username,
-                             self.account_info.password,
-                             query_type=query_type,
+        return RESTUtils.put(uri,
+                             headers=headers,
+                             auth=AtlassianAccount(),
+                             timeout=timeout,
                              payload=payload)
 
-    def rest_create_url(self, server, build_key, query_type, stage=None, artifact=None, url_query_string=None):
+    @staticmethod
+    def create_url(server, query_type, build_key=None, job=None, artifact=None, url_query_string=None):
+        """Dynamically create a URL based on provided arguments.
+        :param server: The server string used in the url
+        :param query_type: The type of query used to create the url (a type listed in BambooQueryTypes)
+        :param build_key: The bamboo build key (optional)
+        :param job: The job name as configured in bamboo (optional)
+        :param artifact: The artifact to be used (optional)
+        :param url_query_string: The query string to be used (optional)
         """
-        Creats an URL dynamically
-        """
-        return RESTUtils.create_url(self, server, build_key, query_type,
-                                    stage=stage,
-                                    artifact=artifact,
-                                    url_query_string=url_query_string)
+
+        if query_type not in AtlassianUtils.BambooQueryTypes.KNOWN_QUERY_TYPES:
+            raise ValueError("Query type not supported!")
+
+        if query_type == AtlassianUtils.BambooQueryTypes.PLAN_QUERY:
+            return "{url}{build_key}.json?includeAllStates=true".format(
+                url=AtlassianUtils.BAMBOO_QUERY_PLAN_URL.format(server),
+                build_key=build_key,
+            )
+
+        if query_type == AtlassianUtils.BambooQueryTypes.RESULTS_QUERY:
+            return "{url}{build_key}.json?max-results=10000".format(
+                url=AtlassianUtils.BAMBOO_PLAN_RESULTS_URL.format(server),
+                build_key=build_key,
+            )
+
+        if query_type == AtlassianUtils.BambooQueryTypes.STOP_PLAN_QUERY:
+            return "{url}?planResultKey={build_key}".format(
+                url=AtlassianUtils.BAMBOO_STOP_PLAN_URL.format(server),
+                build_key=build_key
+            )
+
+        if query_type == AtlassianUtils.BambooQueryTypes.QUEUE_QUERY:
+            return "{url}?expand=queuedBuilds".format(
+                url=AtlassianUtils.BAMBOO_LATEST_QUEUE_URL.format(server),
+            )
+
+        elif query_type == AtlassianUtils.BambooQueryTypes.ARTIFACT_QUERY:
+            # TODO: check whether url_query_string is still required
+            url_query_string = url_query_string or ''
+            return (
+                "{url}{url_query_string}".format(
+                    url=AtlassianUtils.BAMBOO_ARTIFACT_URL.format(
+                        server, build_key, job, artifact
+                    ),
+                    url_query_string=url_query_string)
+            )
 
 
 class JiraUtils(AtlassianUtils):
@@ -1487,6 +1564,30 @@ class BambooUtils(AtlassianUtils):
     def __init__(self):
         super(AtlassianUtils, self).__init__()
 
+    @staticmethod
+    def get_artifacts_from_html_page(page_content):
+        """Parses HTML page in order to obtain the list of artifacts.
+        :param page_content: HTML page content
+        """
+
+        artifacts = list()
+
+        soup = BeautifulSoup(page_content, 'html.parser')
+        # All "<a href></a>" elements
+        a_html_elements = (soup.find_all('a'))
+
+        for a_html_elem in a_html_elements:
+            # File name, as href tag value
+            file_name = a_html_elem.extract().get_text()
+
+            # Do not add HREF value in case PAGE NOT FOUND error
+            if file_name != "Site homepage":
+                artifacts.append(file_name)
+
+            # TODO: add support to download artifacts from sub-dirs as well
+
+        return artifacts
+
     def bamboo_trigger_build(self, server=None, plan_key=None, req_values=None):
         """Method to trigger a build using Bamboo API
 
@@ -1519,49 +1620,52 @@ class BambooUtils(AtlassianUtils):
 
         return self.rest_post(url, payload)
 
-    def bamboo_query_build(self, server=None, build_key=None, query_type=None):
+    def bamboo_query_build(self, server=None, query_type=None, build_key=None):
         """Method to query a plan build using Bamboo API.
 
         :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
-        :param build_key: Bamboo build key [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/query_results>) [string]
+        :param build_key: Bamboo build key [string]
 
         :return: A dictionary containing HTTP status_code and request content
         :raise: Exception, ValueError on errors
         """
 
-        if not all((server, build_key, query_type)):
+        if not all((server, query_type, build_key)):
             return {'content': "Incorrect input provided!"}
 
-        url = self.rest_create_url(server, build_key, query_type)
+        url = self.create_url(server, query_type, build_key=build_key)
         print("URL used in query: '{url}'".format(url=url))
 
-        return self.rest_get(url, query_type)
+        return self.rest_get(url)
 
     def bamboo_query_build_for_artifacts(self, server=None, build_key=None, query_type=None,
-                                         stage=None, artifact=None, url_query_string=None):
+                                         job=None, artifact=None, url_query_string=None):
         """Method to query Bamboo plan run for stage artifacts
 
         :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
         :param build_key: Bamboo build key [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/download_artifact>) [string]
-        :param stage: Bamboo plan stage name [string]
+        :param job: Bamboo plan job name [string]
         :param artifact: Name of the artifact as in Bamboo plan stage job [string]
         :param url_query_string: Query string to compound the URL [string]
 
-        :return: A dictionary containing HTTP status_code, request content and list of artifacts
+        :return: A list containing the artifacts found in the response data
         :raise: Exception, ValueError on Errors
         """
 
-        if not all((server, build_key, query_type, stage, artifact)):
+        if not all((server, build_key, query_type, job, artifact)):
             return {'content': "Incorrect input provided!"}
 
         url_query_string = url_query_string or ''
 
-        url = self.rest_create_url(server, build_key, query_type, stage, artifact, url_query_string)
+        url = self.create_url(server, query_type, build_key=build_key, job=job, artifact=artifact,
+                              url_query_string=url_query_string)
         print("URL used to query for artifacts: '{url}'".format(url=url))
 
-        return self.rest_get(url, query_type)
+        response = self.rest_get(url)
+
+        return self.get_artifacts_from_html_page(response['content'])
 
     def bamboo_get_artifact(self, server=None, build_key=None, query_type=None,
                             stage=None, artifact=None, url_query_string=None, destination_file=None):
@@ -1582,7 +1686,7 @@ class BambooUtils(AtlassianUtils):
         if not all((server, build_key, query_type, stage, artifact, destination_file)):
             return {'content': "Incorrect input provided!"}
 
-        url = self.rest_create_url(server, build_key, query_type, stage, artifact, url_query_string or '')
+        url = self.create_url(server, build_key, query_type, stage, artifact, url_query_string or '')
         print("URL used to download artifact: '{url}'".format(url=url))
 
         return self.rest_get(url, query_type, destination_file=destination_file)
@@ -1601,7 +1705,7 @@ class BambooUtils(AtlassianUtils):
         if not all((server, build_key)):
             return {'content': "Incorrect input provided!"}
 
-        url = self.rest_create_url(server, build_key, query_type)
+        url = self.create_url(server, build_key, query_type)
         print("URL used to stop plan: '{url}'".format(url=url))
 
         return self.rest_post(url, query_type)
