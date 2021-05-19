@@ -3,7 +3,6 @@ import os
 import requests
 import urlparse
 
-from bs4 import BeautifulSoup
 from functools import wraps
 from interface.atlassian import AtlassianAccount
 from helper.utils import Utils
@@ -16,7 +15,7 @@ class HttpStatusCodes:
     SUCCESS_OK = 200
     SUCCESS_CREATED = 201
     SUCCESS_NO_CONTENT = 204
-    
+
     FAIL_BAD_REQUEST = 400
     FAIL_UNAUTHORIZED = 401
     FAIL_FORBIDDEN = 403
