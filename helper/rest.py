@@ -3,6 +3,7 @@ import os
 import requests
 import urlparse
 
+from collections import namedtuple
 from functools import wraps
 from interface.atlassian import AtlassianAccount
 from helper.utils import Utils
@@ -62,14 +63,16 @@ class RESTUtils:
             :return: The packed response
             """
 
+            packed_response = namedtuple('packed_response', ['response', 'status_code', 'content', 'url'])
+
             response = func(*args, **kwargs)
 
-            return {
-                'response': True if response.status_code == HttpStatusCodes.SUCCESS_OK else False,
-                'status_code': response.status_code,
-                'content': response.content,
-                'url': response.url
-            }
+            return packed_response(
+                response=True if response.status_code == HttpStatusCodes.SUCCESS_OK else False,
+                status_code=response.status_code,
+                content=response.content,
+                url=response.url
+            )
 
         return get_response
 
@@ -222,4 +225,21 @@ class RESTUtils:
         """
 
         return RESTUtils.make_request(url, 'PUT', headers=headers, auth=auth, payload=payload, timeout=timeout,
+                                      **kwargs)
+
+    @staticmethod
+    def delete(url, payload, headers=None, auth=None, timeout=None, **kwargs):
+        # type: (str, str, str, AtlassianAccount, int, dict) -> RESTUtils.make_request
+        """
+        Run a POST REST call
+        :param url: REST URI
+        :param payload: POST call payload
+        :param headers: The headers to be used in request
+        :param auth: The authentication object to be used
+        :param timeout: The timeout to be used when waiting fot server response
+        :param kwargs: Additional arguments to be passed to request
+        :return: REST call response object
+        """
+
+        return RESTUtils.make_request(url, 'DELETE', headers=headers, auth=auth, payload=payload, timeout=timeout,
                                       **kwargs)
