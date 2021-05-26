@@ -60,7 +60,9 @@ class RESTUtils:
             """Get the response from the wrapped function, pack and serve it to client.
             :param args: The function positional arguments
             :param kwargs: The function keyword arguments
-            :return: The packed response
+            :return: The packed response, a namedtuple object containing the response as bool, the status code,
+                     the binary content as returned by the corresponding request object attribute and the url used
+                     within the request
             """
 
             packed_response = namedtuple('packed_response', ['response', 'status_code', 'content', 'url'])

@@ -1,11 +1,9 @@
 #!/usr/bin/python -tt
 # -*- coding: utf-8 -*-
 
-
-__copyright__ = "2019 NXP Semiconductors. All rights reserved."
-
-
 from pprint import pprint
+
+__copyright__ = "Copyright 2019-2021 NXP"
 
 
 class FunctionDebug(object):
