@@ -9,6 +9,9 @@ from interface.atlassian import AtlassianAccount
 from helper.utils import Utils
 
 
+__copyright__ = "Copyright 2019-2021 NXP"
+
+
 class HttpStatusCodes:
     """Class used for storing HTTP status codes"""
 

@@ -32,26 +32,6 @@ from tldextract import extract
 __copyright__ = "Copyright 2019-2021 NXP"
 
 
-HEADERS = {'Content-Type': 'application/json'}
-
-# Timeout before repeat request
-REQUEST_RETRY_DELAY_SEC = 10
-# Timeout before request will be rejected
-REQUEST_TIMEOUT_SEC = 60
-
-# Status codes
-SUCCESS_OK = 200
-SUCCESS_CREATED = 201
-SUCCESS_NO_CONTENT = 204
-
-FAIL_BAD_REQUEST = 400
-FAIL_UNAUTHORIZED = 401
-FAIL_FORBIDDEN = 403
-FAIL_NOT_FOUND = 404
-FAIL_CONFLICT = 409
-FAIL_UNSUPPORTED = 415
-
-
 class BitbucketTag(object):
     """
     POD class for storing the attributes of a tag in Bitbucket
@@ -63,6 +43,10 @@ class BitbucketTag(object):
 
 
 class AtlassianAccount(object):
+    """
+    Class that stores credentials for using AtlassianUtils services
+    """
+
     def __init__(self):
         self.__username, self.__password = self.__load_credentials()
 
@@ -92,11 +76,11 @@ class AtlassianUtils(object):
     # CONSTANTS
 
     # JIRA constants:
-    # JIRA authentication URL
 
-    #JIRA link
+    # JIRA link
     JIRA_URL = 'https://jira.sw.nxp.com/'
 
+    # JIRA authentication URL
     JIRA_AUTH_URL = JIRA_URL + 'rest/auth/latest/session'
 
     # Information about a Jira issue
@@ -120,11 +104,11 @@ class AtlassianUtils(object):
     JIRA_USER_SEARCH_URL = JIRA_URL + 'rest/api/latest/user/assignable/search?project={0}{1}'
 
     # BITBUCKET constants:
-    # Creates a tag in the specified repository
 
     # Bitbucket link
     BITBUCKET_URL = 'https://bitbucket.sw.nxp.com/'
 
+    # Creates a tag in the specified repository
     BITBUCKET_SET_TAG_URL = BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/tags'
 
     # Get all tags from the specified repository
@@ -186,14 +170,13 @@ class AtlassianUtils(object):
     # Pull request get/set info
     BITBUCKET_PULL_REQUEST_INFO_URL = BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}'
 
+    # Pull request get changes
     BITBUCKET_GET_PULL_REQUEST_CHANGES_URL = (
             BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}/changes'
     )
 
-    # Pull request get changes
-    BITBUCKET_PULL_REQUEST_PAGED_CHANGES_URL = (
-        BITBUCKET_GET_PULL_REQUEST_CHANGES_URL + '?start={3}&limit=1000'
-    )
+    # Pull request get paged changes
+    BITBUCKET_PULL_REQUEST_PAGED_CHANGES_URL = BITBUCKET_GET_PULL_REQUEST_CHANGES_URL + '?start={3}&limit=1000'
 
     # Get all files from a specified repository
     BITBUCKET_GET_FILES_URL = BITBUCKET_URL + 'rest/api/1.0/projects/{0}/repos/{1}/browse?start={2}&limit=1000'
@@ -202,8 +185,6 @@ class AtlassianUtils(object):
     BITBUCKET_GET_FILE_URL = BITBUCKET_URL + 'rest/api/1.0/projects/{0}/repos/{1}/browse/{2}'
 
     # BAMBOO constants:
-    # Bamboo server
-    BAMBOO_SERVER = "bamboo1"
 
     # Bamboo plan link
     BAMBOO_URL = 'https://{0}.sw.nxp.com/'
@@ -217,20 +198,28 @@ class AtlassianUtils(object):
     # Bamboo request for getting plan branches
     BAMBOO_GET_PLAN_BRANCHES_INFO_URL = BAMBOO_URL + 'rest/api/latest/plan/{1}/branch.json?max-result=1000'
 
+    # Bamboo request for triggering plan
     BAMBOO_TRIGGER_PLAN_URL = BAMBOO_URL + 'rest/api/latest/queue/'
 
+    # Bamboo request for stopping plan
     BAMBOO_STOP_PLAN_URL = BAMBOO_URL + 'build/admin/stopPlan.action'
 
+    # Bamboo request for getting plan results
     BAMBOO_PLAN_RESULTS_URL = BAMBOO_URL + 'rest/api/latest/result/'
 
+    # Bamboo request for querying plan
     BAMBOO_QUERY_PLAN_URL = BAMBOO_URL + 'rest/api/latest/plan/'
 
+    # Bamboo request for querying plan queue
     BAMBOO_LATEST_QUEUE_URL = BAMBOO_URL + 'rest/api/latest/queue.json'
 
+    # Bamboo request for getting artifact
     BAMBOO_ARTIFACT_URL = BAMBOO_URL + 'browse/{1}/artifact/{2}/{3}/'
 
+    # Bamboo request for retrieving unfinished builds
     BAMBOO_GET_UNFINISHED_BUILDS = BAMBOO_URL + 'rest/api/{1}/result/{2}{3}?includeAllStates=true&buildstate=Unknown'
 
+    # Bamboo request for retrieving Bamboo variables
     BAMBOO_GET_BUILD_BAMBOO_VARS_INFO = (
             BAMBOO_URL + 'rest/api/{1}/result/{2}-{3}{4}?includeAllStates=true&expand=variables'
     )
@@ -250,7 +239,7 @@ class AtlassianUtils(object):
 
     #
     # Each Bamboo variable is visible as an environment variable.
-    # The environment variable name is obtained from the Bamboo variable name prefixed with this string
+    # The environment variable name is obtained from the Bamboo variable name prefixed with this string: "bamboo_"
     #
 
     @staticmethod
@@ -387,10 +376,10 @@ class AtlassianUtils(object):
         """
 
         return RESTUtils.put(url,
+                             payload=payload,
                              headers=headers,
                              auth=AtlassianAccount(),
-                             timeout=timeout,
-                             payload=payload)
+                             timeout=timeout)
 
     @staticmethod
     @RESTUtils.pack_response_to_client
@@ -648,8 +637,7 @@ class JiraUtils(AtlassianUtils):
         response = self.rest_post(AtlassianUtils.JIRA_QUERY_URL, payload)
         if response != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
-                'Cannot run query "{0}": {1}'.format(
-                    query, response.content)
+                'Cannot run query "{0}": {1}'.format(query, response.content)
             )
         data = json.loads(response.content)
         if max_results:
@@ -860,7 +848,7 @@ class BitbucketUtils(AtlassianUtils):
             url = AtlassianUtils.BITBUCKET_GET_TAGS_URL.format(project_key, repo, next_page_start)
             response = self.rest_get(url)
             if response.status_code != HttpStatusCodes.SUCCESS_OK:
-                raise RuntimeError('Tag {0} info not be read: {1}'.format(tag, response.content))
+                raise RuntimeError('Tag {0} info could not be read: {1}'.format(tag, response.content))
 
             data = json.loads(response.content)
 
@@ -1168,7 +1156,7 @@ class BitbucketUtils(AtlassianUtils):
         :param repo: The Bitbucket repo where to seek the commits
         :param start_commit: The start commit
         :param end_commit: The end commit
-        :param match_status: A list of statuses based on which to filter the JIRA IDs
+        :param match_status: A list of status based on which to filter the JIRA IDs
         :param ignore_missing: Specify whether missing commits will be ignored
         :param with_counts: Specify whether the total number of commits should be included
         If None, no filter will be applied
@@ -1327,7 +1315,7 @@ class BitbucketUtils(AtlassianUtils):
     def bitbucket_get_pull_request_merge_info(self, repo, pr_id):
         """Get merge information for a pull request
         :param repo: Bitbucket repo
-        :param pr_id: pul request id
+        :param pr_id: pull request id
         """
 
         url = AtlassianUtils.BITBUCKET_PULL_REQUEST_MERGE_URL.format(self.project_key, repo, pr_id)
@@ -1348,7 +1336,7 @@ class BitbucketUtils(AtlassianUtils):
     def bitbucket_merge_pull_request(self, repo, pr_id):
         """Get merge information for a pull request
         :param repo: Bitbucket repo
-        :param pr_id: pul request id
+        :param pr_id: pull request id
         """
 
         pr_info = self.bitbucket_get_pull_request_info(repo, pr_id)
@@ -1727,14 +1715,14 @@ class BambooUtils(AtlassianUtils):
                     url_query_string=url_query_string)
             )
 
-    def bamboo_trigger_build(self, server=None, build_key=None, req_values=None):
+    def bamboo_trigger_build(self, server, build_key=None, req_values=None):
         """Method to trigger a build using Bamboo API
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_key: Bamboo build key [string]
         :param req_values: Values to insert into request (tuple)
 
-        :return: A dictionary containing HTTP status_code and request content
+        :return: A named tuple containing HTTP status_code and request content
         :raise: Exception, ValueError on Errors
         """
 
@@ -1762,14 +1750,14 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_query_build(self, server=None, query_type=None, build_key=None):
+    def bamboo_query_build(self, server, query_type=None, build_key=None):
         """Method to query a plan build using Bamboo API.
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/query_results>) [string]
         :param build_key: Bamboo build key [string]
 
-        :return: A dictionary containing HTTP status_code and request content
+        :return: A named tuple containing HTTP status_code and request content
         :raise: Exception, ValueError on errors
         """
 
@@ -1785,11 +1773,11 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_query_build_for_artifacts(self, server=None, build_key=None, query_type=None,
+    def bamboo_query_build_for_artifacts(self, server, build_key=None, query_type=None,
                                          job=None, artifact=None, url_query_string=None):
         """Method to query Bamboo plan run for stage artifacts
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_key: Bamboo build key [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/download_artifact>) [string]
         :param job: Bamboo plan job name [string]
@@ -1815,11 +1803,11 @@ class BambooUtils(AtlassianUtils):
 
         return self.get_artifacts_from_html_page(response.content)
 
-    def bamboo_get_artifact(self, server=None, build_key=None, query_type=None,
+    def bamboo_get_artifact(self, server, build_key=None, query_type=None,
                             stage=None, artifact=None, url_query_string=None, destination_file=None):
         """Method to download artifact from Bamboo plan
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_key: Bamboo build key [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/download_artifact>) [string]
         :param stage: Bamboo plan stage name [string]
@@ -1827,7 +1815,7 @@ class BambooUtils(AtlassianUtils):
         :param url_query_string: Query string to compound the URL [string]
         :param destination_file: Full path to destination file [string]
 
-        :return: A dictionary containing HTTP status_code and request content
+        :return: A named tuple containing HTTP status_code and request content
         :raise: Exception, ValueError on Errors
         """
 
@@ -1843,14 +1831,14 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_stop_build(self, server=None, build_key=None, query_type=None):
+    def bamboo_stop_build(self, server, build_key=None, query_type=None):
         """Method to stop a running plan from Bamboo using Bamboo API
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_key: Bamboo build key [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/query_results>) [string]
 
-        :return: A dictionary containing HTTP status_code and request content
+        :return: A named tuple containing HTTP status_code and request content
         :raise: Exception, ValueError on errors
         """
 
@@ -1866,11 +1854,11 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_kill_build_after_timeout(self, kill_after_timeout=-1, server=None, build_key=None):
+    def bamboo_kill_build_after_timeout(self, server, kill_after_timeout=-1, build_key=None):
         """Method to watch an Job execution on Bamboo stage.
         If exceed the specified timeout, the method will stop the current plan
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo2>) [string]
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param kill_after_timeout: Timeout interval to wait until stopping the plan (seconds) [integer]
         :param build_key: Bamboo build key [string]
 
@@ -1878,16 +1866,16 @@ class BambooUtils(AtlassianUtils):
                 None, no 'build_key/kill_after_timeout' supplied
         """
 
-        if not build_key:
-            print("\nNo build key supplied!\n")
-            return None
-
         if not server:
             print("\nNo Bamboo server name supplied!\n")
             return None
 
         if kill_after_timeout == -1:
             print("\nAborting the execution of the method as 'kill_after_timeout = -1'!\n")
+            return None
+
+        if not build_key:
+            print("\nNo build key supplied!\n")
             return None
 
         kill_timeout = float(kill_after_timeout)
@@ -1903,32 +1891,31 @@ class BambooUtils(AtlassianUtils):
 
         return kill_timer
 
-    # Atlassian Utils methods
-    def bamboo_get_plan_branch(self, plan_key, branch_name):
-        """
-        Retrieves the specified branch of the given Bamboo plan
+    def bamboo_get_plan_branch(self, server, plan_key, branch_name):
+        """Retrieves the specified branch of the given Bamboo plan
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param plan_key: plan key in form {projectKey}-{buildKey}
         :param branch_name: name of branch
         :return branch details
         """
 
         # noinspection PyBroadException
-        url = AtlassianUtils.BAMBOO_PLAN_BRANCH_REQUEST_URL.format(plan_key, branch_name)
+        url = AtlassianUtils.BAMBOO_PLAN_BRANCH_REQUEST_URL.format(server, plan_key, branch_name)
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError('Could not get info for plan branch {0}'.format(branch_name))
 
         return response
 
-    def bamboo_get_branch_key_by_name(self, plan, plan_branch):
-        """
-        Gets the branch unique id if the name is found in the configured plan branches
+    def bamboo_get_branch_key_by_name(self, server, plan, plan_branch):
+        """Gets the branch unique id if the name is found in the configured plan branches
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param plan: plan unique key
         :param plan_branch: name of the branch
         :return: branch unique key in the plan, if it is configured
         """
 
-        request_url = AtlassianUtils.BAMBOO_GET_PLAN_BRANCHES_INFO_URL.format(plan)
+        request_url = AtlassianUtils.BAMBOO_GET_PLAN_BRANCHES_INFO_URL.format(server, plan)
 
         response = self.rest_get(request_url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
@@ -1949,8 +1936,7 @@ class BambooUtils(AtlassianUtils):
         return branch_key
 
     def bamboo_wait_for_build(self, build_url, timeout=0):
-        """
-        Waits for a specific build to be finished using get requests and interrogating build status.
+        """Waits for a specific build to be finished using get requests and interrogating build status.
         :param build_url: Triggered build url
         :param timeout: Maximum build time for triggered build until the build is considered to be failed, in seconds,
         if 0, the build will be left to run indefinitely
@@ -1977,9 +1963,9 @@ class BambooUtils(AtlassianUtils):
         else:
             print("Triggered build was successful")
 
-    def bamboo_build_plan_branch(self, plan_settings, wait_completion=True, timeout=0):
-        """
-        Triggers a build in the configured plan.
+    def bamboo_build_plan_branch(self, server, plan_settings, wait_completion=True, timeout=0):
+        """Triggers a build in the configured plan.
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param plan_settings: configuration instance of the remote plan containing information about plan name, branch
         name and build arguments
         :param wait_completion: boolean determining whether the build result will be waited
@@ -1988,7 +1974,8 @@ class BambooUtils(AtlassianUtils):
         """
 
         request_url = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(
-            self.bamboo_get_branch_key_by_name(plan_settings.plan, plan_settings.plan_branch) + ".json?")
+            server,
+            self.bamboo_get_branch_key_by_name(server, plan_settings.plan, plan_settings.plan_branch) + ".json?")
         if plan_settings.build_args:
             request_url += plan_settings.build_args
 
@@ -2009,15 +1996,15 @@ class BambooUtils(AtlassianUtils):
         if wait_completion:
             self.bamboo_wait_for_build(json.loads(response.content)["link"]["href"] + ".json", timeout)
 
-    def bamboo_trigger_build_plan(self, build_plan_key):
-        """
-        Post the specified build to the Bamboo build queue
+    def bamboo_trigger_build_plan(self, server, build_plan_key):
+        """Post the specified build to the Bamboo build queue
+        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_plan_key: Build plan key
         """
 
-        print('Posting build plan to Bamboo queue: https://bamboo1.sw.nxp.com/browse/{0}'.format(build_plan_key))
+        print('Posting build plan to Bamboo queue: https://{0}.sw.nxp.com/browse/{0}'.format(server, build_plan_key))
 
-        url = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(build_plan_key)
+        url = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(server, build_plan_key)
         self.rest_post(url, {})
 
 
@@ -2549,7 +2536,8 @@ class PullRequestTriggerJob(AutomationJob):
             # Subclasses provide the bamboo plan key
             plan_key = self.get_build_plan_key(source_branch, target_branch)
             # Trigger build
-            self.bamboo_utils.bamboo_trigger_build_plan(plan_key)
+            # TODO
+            self.bamboo_utils.bamboo_trigger_build_plan(server, plan_key)
         except Exception:
             return False
         else:
