@@ -347,56 +347,56 @@ class AtlassianUtils(object):
 
     @staticmethod
     @RESTUtils.pack_response_to_client
-    def rest_post(url, payload, headers=None, timeout=None):
+    def rest_post(url, headers=None, payload=None, timeout=None):
         """
         Runs a POST REST call on JIRA
         :param url: REST service URL
-        :param payload: Payload used by the call
         :param headers: The headers to be included in query
+        :param payload: Payload used by the call
         :param timeout: The timeout to be used when waiting for response
         :return: REST call response object
         """
 
         return RESTUtils.post(url,
-                              payload,
                               headers=headers,
                               auth=AtlassianAccount(),
+                              payload=payload,
                               timeout=timeout)
 
     @staticmethod
     @RESTUtils.pack_response_to_client
-    def rest_put(url, payload, headers=None, timeout=None):
+    def rest_put(url, headers=None, payload=None, timeout=None):
         """
         Runs a PUT REST call on JIRA
         :param url: REST service URL
-        :param payload: Payload used by the call
         :param headers: The headers to be included in query
+        :param payload: Payload used by the call
         :param timeout: The timeout to be used when waiting for response
         :return: REST call response object
         """
 
         return RESTUtils.put(url,
-                             payload=payload,
                              headers=headers,
                              auth=AtlassianAccount(),
+                             payload=payload,
                              timeout=timeout)
 
     @staticmethod
     @RESTUtils.pack_response_to_client
-    def rest_delete(url, payload, headers=None, timeout=None):
+    def rest_delete(url, headers=None, payload=None, timeout=None):
         """
         Runs a POST REST call on JIRA
         :param url: REST service URL
-        :param payload: Payload used by the call
         :param headers: The headers to be included in query
+        :param payload: Payload used by the call
         :param timeout: The timeout to be used when waiting for response
         :return: REST call response object
         """
 
         return RESTUtils.delete(url,
-                                payload,
                                 headers=headers,
                                 auth=AtlassianAccount(),
+                                payload=payload,
                                 timeout=timeout)
 
 
@@ -486,7 +486,7 @@ class JiraUtils(AtlassianUtils):
             payload = self.jira_generate_defect_field_allowed_value(jira_id, field, value)
 
         url = AtlassianUtils.JIRA_DEFECT_INFO_URL.format(jira_id)
-        response = self.rest_put(url, payload)
+        response = self.rest_put(url, payload=payload)
         return response.status_code
 
     def jira_get_transition_id(self, jira_id, to_status):
@@ -537,7 +537,7 @@ class JiraUtils(AtlassianUtils):
         payload = dict(itertools.chain(payload.iteritems(), change_set.iteritems()))  # merge the 2 dictionaries
 
         url = AtlassianUtils.JIRA_DEFECT_TRANSITIONS_INFO_URL.format(jira_id)
-        response = self.rest_post(url, payload)
+        response = self.rest_post(url, payload=payload)
         return response.status_code
 
     def jira_get_defect_status(self, jira_id):
@@ -634,7 +634,7 @@ class JiraUtils(AtlassianUtils):
         if max_results:
             payload['maxResults'] = '{0}'.format(max_results)
 
-        response = self.rest_post(AtlassianUtils.JIRA_QUERY_URL, payload)
+        response = self.rest_post(AtlassianUtils.JIRA_QUERY_URL, payload=payload)
         if response != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot run query "{0}": {1}'.format(query, response.content)
@@ -909,7 +909,7 @@ class BitbucketUtils(AtlassianUtils):
         }
         url = AtlassianUtils.BITBUCKET_SET_TAG_URL.format(self.project_key, repo)
 
-        response = self.rest_post(url, payload)
+        response = self.rest_post(url, payload=payload)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError('Failed to set tag {0}: {1}'.format(tag, response.content))
 
@@ -1550,7 +1550,7 @@ class BitbucketUtils(AtlassianUtils):
             payload['reviewers'] = pull_request['reviewers']
             try:
                 url = AtlassianUtils.BITBUCKET_PULL_REQUEST_INFO_URL.format(self.project_key, repo, id_)
-                self.rest_put(url, payload)
+                self.rest_put(url, payload=payload)
             except:  # noqa: E722
                 print('Adding {0} to pull request id {1} failed'.format(description_header, id_))
                 raise
@@ -1609,7 +1609,7 @@ class BitbucketUtils(AtlassianUtils):
             "dryRun": False
         }
 
-        response = self.rest_delete(url, payload)
+        response = self.rest_delete(url, payload=payload)
         if response.status_code != HttpStatusCodes.SUCCESS_NO_CONTENT:
             raise RuntimeError('Could not delete branch {0} from repo {1}'.format(branch, repo))
 
@@ -1744,7 +1744,7 @@ class BambooUtils(AtlassianUtils):
         url = self.create_url(server, self.query_types.TRIGGER_PLAN_QUERY, build_key=build_key)
         print("URL used to trigger build: '{url}'".format(url=url))
 
-        response = self.rest_post(url, payload)
+        response = self.rest_post(url, payload=payload)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError('Could not trigger build for plan {0}'.format(build_key))
 
@@ -1848,7 +1848,7 @@ class BambooUtils(AtlassianUtils):
         url = self.create_url(server, build_key, query_type)
         print("URL used to stop plan: '{url}'".format(url=url))
 
-        response = self.rest_post(url, query_type)
+        response = self.rest_post(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError('Could not stop build for plan having build key {0}'.format(build_key))
 
@@ -2005,7 +2005,7 @@ class BambooUtils(AtlassianUtils):
         print('Posting build plan to Bamboo queue: https://{0}.sw.nxp.com/browse/{0}'.format(server, build_plan_key))
 
         url = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(server, build_plan_key)
-        self.rest_post(url, {})
+        self.rest_post(url, payload={})
 
 
 class AutomationConfiguration(object):

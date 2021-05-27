@@ -199,14 +199,14 @@ class RESTUtils:
         return RESTUtils.make_request(url, 'GET', headers=headers, auth=auth, timeout=timeout, **kwargs)
 
     @staticmethod
-    def post(url, payload, headers=None, auth=None, timeout=None, **kwargs):
-        # type: (str, str, str, AtlassianAccount, int, dict) -> RESTUtils.make_request
+    def post(url, headers=None, auth=None, payload=None, timeout=None, **kwargs):
+        # type: (str, str, AtlassianAccount, str, int, dict) -> RESTUtils.make_request
         """
         Run a POST REST call
         :param url: REST URI
-        :param payload: POST call payload
         :param headers: The headers to be used in request
         :param auth: The authentication object to be used
+        :param payload: POST call payload
         :param timeout: The timeout to be used when waiting fot server response
         :param kwargs: Additional arguments to be passed to request
         :return: REST call response object
@@ -216,14 +216,14 @@ class RESTUtils:
                                       **kwargs)
 
     @staticmethod
-    def put(url, payload, headers=None, auth=None, timeout=None, **kwargs):
-        # type: (str, str, str, AtlassianAccount, int, dict) -> RESTUtils.make_request
+    def put(url, headers=None, auth=None, payload=None, timeout=None, **kwargs):
+        # type: (str, str, AtlassianAccount, str, int, dict) -> RESTUtils.make_request
         """
         Run a PUT REST call
         :param url: REST URI
-        :param payload: POST call payload
         :param headers: The headers to be used in request
         :param auth: The authentication object to be used
+        :param payload: POST call payload
         :param timeout: The timeout to be used when waiting fot server response
         :param kwargs: Additional arguments to be passed to request
         :return: REST call response object
@@ -233,14 +233,14 @@ class RESTUtils:
                                       **kwargs)
 
     @staticmethod
-    def delete(url, payload, headers=None, auth=None, timeout=None, **kwargs):
-        # type: (str, str, str, AtlassianAccount, int, dict) -> RESTUtils.make_request
+    def delete(url, headers=None, auth=None, payload=None, timeout=None, **kwargs):
+        # type: (str, str, AtlassianAccount, str, int, dict) -> RESTUtils.make_request
         """
         Run a POST REST call
         :param url: REST URI
-        :param payload: POST call payload
         :param headers: The headers to be used in request
         :param auth: The authentication object to be used
+        :param payload: POST call payload
         :param timeout: The timeout to be used when waiting fot server response
         :param kwargs: Additional arguments to be passed to request
         :return: REST call response object
