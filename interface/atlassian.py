@@ -337,7 +337,7 @@ class AtlassianUtils(object):
         """
 
         if destination_file:
-            return RESTUtils.download(url, timeout=timeout, destination=destination_file)
+            return RESTUtils.download(url, auth=AtlassianAccount(), timeout=timeout, destination=destination_file)
 
         return RESTUtils.get(url,
                              headers=headers,
@@ -1634,12 +1634,19 @@ class BambooUtils(AtlassianUtils):
     def __init__(self, project_key):
         super(BambooUtils, self).__init__(project_key)
         self.__query_types = BambooUtils.BambooQueryTypes
+        self.__bamboo_server = self.get_bamboo_server()
 
     @property
     def query_types(self):
         """Return the query types"""
 
         return self.__query_types
+
+    @property
+    def bamboo_server(self):
+        """Return the coverity server"""
+
+        return self.__bamboo_server
 
     @staticmethod
     def get_artifacts_from_html_page(page_content):
@@ -1665,9 +1672,23 @@ class BambooUtils(AtlassianUtils):
 
         return artifacts
 
-    def create_url(self, server, query_type, build_key=None, job=None, artifact=None, url_query_string=None):
+    def get_bamboo_server(self):
+        """Get the bamboo server from 'bamboo_resultsUrl' plan variable
+        e.g: bamboo_resultsUrl=https://bamboo1.sw.nxp.com/browse/AMPAT-XYZ-XYZ1-1 --> bamboo1"""
+
+        results_url = self.get_bamboo_env('resultsUrl')
+        server_name = None
+        try:
+            extract_instance = extract(results_url)
+            sub_domain = extract_instance[0]
+            server_name = sub_domain.split('.')[0]
+        except Exception as exc:  # noqa: E722
+            print("Could not get Bamboo server name: {0}".format(exc))
+
+        return server_name
+
+    def create_url(self, query_type, build_key=None, job=None, artifact=None, url_query_string=None):
         """Dynamically create a URL based on provided arguments.
-        :param server: The server string used in the url
         :param query_type: The type of query used to create the url (a type listed in BambooQueryTypes)
         :param build_key: The bamboo build key (optional)
         :param job: The job name as configured in bamboo (optional)
@@ -1680,45 +1701,46 @@ class BambooUtils(AtlassianUtils):
 
         if query_type == self.query_types.TRIGGER_PLAN_QUERY:
             return "{url}{build_key}.json".format(
-                url=AtlassianUtils.BAMBOO_TRIGGER_PLAN_URL.format(server),
+                url=AtlassianUtils.BAMBOO_TRIGGER_PLAN_URL.format(self.bamboo_server),
                 build_key=build_key
             )
 
         elif query_type == self.query_types.PLAN_QUERY:
             return "{url}{build_key}.json?includeAllStates=true".format(
-                url=AtlassianUtils.BAMBOO_QUERY_PLAN_URL.format(server),
+                url=AtlassianUtils.BAMBOO_QUERY_PLAN_URL.format(self.bamboo_server),
                 build_key=build_key
             )
 
         elif query_type == self.query_types.RESULTS_QUERY:
             return "{url}{build_key}.json?max-results=10000".format(
-                url=AtlassianUtils.BAMBOO_PLAN_RESULTS_URL.format(server),
+                url=AtlassianUtils.BAMBOO_PLAN_RESULTS_URL.format(self.bamboo_server),
                 build_key=build_key
             )
 
         elif query_type == self.query_types.STOP_PLAN_QUERY:
             return "{url}?planResultKey={build_key}".format(
-                url=AtlassianUtils.BAMBOO_STOP_PLAN_URL.format(server),
+                url=AtlassianUtils.BAMBOO_STOP_PLAN_URL.format(self.bamboo_server),
                 build_key=build_key
             )
 
         elif query_type == self.query_types.QUEUE_QUERY:
-            return "{url}?expand=queuedBuilds".format(url=AtlassianUtils.BAMBOO_LATEST_QUEUE_URL.format(server))
+            return "{url}?expand=queuedBuilds".format(
+                url=AtlassianUtils.BAMBOO_LATEST_QUEUE_URL.format(self.bamboo_server)
+            )
 
         elif query_type == self.query_types.ARTIFACT_QUERY:
             url_query_string = url_query_string or ''
             return (
                 "{url}{url_query_string}".format(
                     url=AtlassianUtils.BAMBOO_ARTIFACT_URL.format(
-                        server, build_key, job, artifact
+                        self.bamboo_server, build_key, job, artifact
                     ),
                     url_query_string=url_query_string)
             )
 
-    def bamboo_trigger_build(self, server, build_key=None, req_values=None):
+    def bamboo_trigger_build(self, build_key=None, req_values=None):
         """Method to trigger a build using Bamboo API
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_key: Bamboo build key [string]
         :param req_values: Values to insert into request (tuple)
 
@@ -1726,7 +1748,7 @@ class BambooUtils(AtlassianUtils):
         :raise: Exception, ValueError on Errors
         """
 
-        if not all((server, build_key)):
+        if not all((self.bamboo_server, build_key)):
             return {'content': "Incorrect input provided!"}
 
         # Execute all stages by default if no options received
@@ -1741,7 +1763,7 @@ class BambooUtils(AtlassianUtils):
             for key, value in req_values[1].iteritems():
                 payload[key] = [value]
 
-        url = self.create_url(server, self.query_types.TRIGGER_PLAN_QUERY, build_key=build_key)
+        url = self.create_url(self.query_types.TRIGGER_PLAN_QUERY, build_key=build_key)
         print("URL used to trigger build: '{url}'".format(url=url))
 
         response = self.rest_post(url, payload=payload)
@@ -1750,10 +1772,9 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_query_build(self, server, query_type=None, build_key=None):
+    def bamboo_query_build(self, query_type=None, build_key=None):
         """Method to query a plan build using Bamboo API.
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/query_results>) [string]
         :param build_key: Bamboo build key [string]
 
@@ -1761,10 +1782,10 @@ class BambooUtils(AtlassianUtils):
         :raise: Exception, ValueError on errors
         """
 
-        if not all((server, query_type, build_key)):
+        if not all((query_type, build_key)):
             return {'content': "Incorrect input provided!"}
 
-        url = self.create_url(server, query_type, build_key=build_key)
+        url = self.create_url(query_type, build_key=build_key)
         print("URL used in query: '{url}'".format(url=url))
 
         response = self.rest_get(url)
@@ -1773,11 +1794,10 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_query_build_for_artifacts(self, server, build_key=None, query_type=None,
+    def bamboo_query_build_for_artifacts(self, build_key=None, query_type=None,
                                          job=None, artifact=None, url_query_string=None):
         """Method to query Bamboo plan run for stage artifacts
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_key: Bamboo build key [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/download_artifact>) [string]
         :param job: Bamboo plan job name [string]
@@ -1788,12 +1808,12 @@ class BambooUtils(AtlassianUtils):
         :raise: Exception, ValueError on Errors
         """
 
-        if not all((server, build_key, query_type, job, artifact)):
+        if not all((build_key, query_type, job, artifact)):
             return {'content': "Incorrect input provided!"}
 
         url_query_string = url_query_string or ''
 
-        url = self.create_url(server, query_type, build_key=build_key, job=job, artifact=artifact,
+        url = self.create_url(query_type, build_key=build_key, job=job, artifact=artifact,
                               url_query_string=url_query_string)
         print("URL used to query for artifacts: '{url}'".format(url=url))
 
@@ -1803,11 +1823,10 @@ class BambooUtils(AtlassianUtils):
 
         return self.get_artifacts_from_html_page(response.content)
 
-    def bamboo_get_artifact(self, server, build_key=None, query_type=None,
+    def bamboo_get_artifact(self, build_key=None, query_type=None,
                             stage=None, artifact=None, url_query_string=None, destination_file=None):
         """Method to download artifact from Bamboo plan
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_key: Bamboo build key [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/download_artifact>) [string]
         :param stage: Bamboo plan stage name [string]
@@ -1819,10 +1838,10 @@ class BambooUtils(AtlassianUtils):
         :raise: Exception, ValueError on Errors
         """
 
-        if not all((server, build_key, query_type, stage, artifact, destination_file)):
+        if not all((build_key, query_type, stage, artifact, destination_file)):
             return {'content': "Incorrect input provided!"}
 
-        url = self.create_url(server, build_key, query_type, stage, artifact, url_query_string or '')
+        url = self.create_url(build_key, query_type, stage, artifact, url_query_string or '')
         print("URL used to download artifact: '{url}'".format(url=url))
 
         response = self.rest_get(url, query_type, destination_file=destination_file)
@@ -1831,10 +1850,9 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_stop_build(self, server, build_key=None, query_type=None):
+    def bamboo_stop_build(self, build_key=None, query_type=None):
         """Method to stop a running plan from Bamboo using Bamboo API
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_key: Bamboo build key [string]
         :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/query_results>) [string]
 
@@ -1842,10 +1860,10 @@ class BambooUtils(AtlassianUtils):
         :raise: Exception, ValueError on errors
         """
 
-        if not all((server, build_key)):
+        if not build_key:
             return {'content': "Incorrect input provided!"}
 
-        url = self.create_url(server, build_key, query_type)
+        url = self.create_url(build_key, query_type)
         print("URL used to stop plan: '{url}'".format(url=url))
 
         response = self.rest_post(url)
@@ -1854,21 +1872,16 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_kill_build_after_timeout(self, server, kill_after_timeout=-1, build_key=None):
+    def bamboo_kill_build_after_timeout(self, kill_after_timeout=-1, build_key=None):
         """Method to watch an Job execution on Bamboo stage.
         If exceed the specified timeout, the method will stop the current plan
 
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param kill_after_timeout: Timeout interval to wait until stopping the plan (seconds) [integer]
         :param build_key: Bamboo build key [string]
 
         :return Thread
                 None, no 'build_key/kill_after_timeout' supplied
         """
-
-        if not server:
-            print("\nNo Bamboo server name supplied!\n")
-            return None
 
         if kill_after_timeout == -1:
             print("\nAborting the execution of the method as 'kill_after_timeout = -1'!\n")
@@ -1886,36 +1899,34 @@ class BambooUtils(AtlassianUtils):
                 build_key=build_key, timeout=kill_timeout
             )
         )
-        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [server, build_key, "stop_plan"])
+        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [self.bamboo_server, build_key, "stop_plan"])
         kill_timer.start()
 
         return kill_timer
 
-    def bamboo_get_plan_branch(self, server, plan_key, branch_name):
+    def bamboo_get_plan_branch(self, plan_key, branch_name):
         """Retrieves the specified branch of the given Bamboo plan
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param plan_key: plan key in form {projectKey}-{buildKey}
         :param branch_name: name of branch
         :return branch details
         """
 
         # noinspection PyBroadException
-        url = AtlassianUtils.BAMBOO_PLAN_BRANCH_REQUEST_URL.format(server, plan_key, branch_name)
+        url = AtlassianUtils.BAMBOO_PLAN_BRANCH_REQUEST_URL.format(plan_key, branch_name)
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError('Could not get info for plan branch {0}'.format(branch_name))
 
         return response
 
-    def bamboo_get_branch_key_by_name(self, server, plan, plan_branch):
+    def bamboo_get_branch_key_by_name(self, plan, plan_branch):
         """Gets the branch unique id if the name is found in the configured plan branches
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param plan: plan unique key
         :param plan_branch: name of the branch
         :return: branch unique key in the plan, if it is configured
         """
 
-        request_url = AtlassianUtils.BAMBOO_GET_PLAN_BRANCHES_INFO_URL.format(server, plan)
+        request_url = AtlassianUtils.BAMBOO_GET_PLAN_BRANCHES_INFO_URL.format(self.bamboo_server, plan)
 
         response = self.rest_get(request_url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
@@ -1963,9 +1974,8 @@ class BambooUtils(AtlassianUtils):
         else:
             print("Triggered build was successful")
 
-    def bamboo_build_plan_branch(self, server, plan_settings, wait_completion=True, timeout=0):
+    def bamboo_build_plan_branch(self, plan_settings, wait_completion=True, timeout=0):
         """Triggers a build in the configured plan.
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param plan_settings: configuration instance of the remote plan containing information about plan name, branch
         name and build arguments
         :param wait_completion: boolean determining whether the build result will be waited
@@ -1974,8 +1984,11 @@ class BambooUtils(AtlassianUtils):
         """
 
         request_url = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(
-            server,
-            self.bamboo_get_branch_key_by_name(server, plan_settings.plan, plan_settings.plan_branch) + ".json?")
+            self.bamboo_server,
+            self.bamboo_get_branch_key_by_name(
+                plan_settings.plan, plan_settings.plan_branch
+            ) + ".json?"
+        )
         if plan_settings.build_args:
             request_url += plan_settings.build_args
 
@@ -1996,15 +2009,18 @@ class BambooUtils(AtlassianUtils):
         if wait_completion:
             self.bamboo_wait_for_build(json.loads(response.content)["link"]["href"] + ".json", timeout)
 
-    def bamboo_trigger_build_plan(self, server, build_plan_key):
+    def bamboo_trigger_build_plan(self, build_plan_key):
         """Post the specified build to the Bamboo build queue
-        :param server: Bamboo server used in API call (e.g.:<bamboo1/bamboo3>) [string]
         :param build_plan_key: Build plan key
         """
 
-        print('Posting build plan to Bamboo queue: https://{0}.sw.nxp.com/browse/{0}'.format(server, build_plan_key))
+        print(
+            'Posting build plan to Bamboo queue: https://{0}.sw.nxp.com/browse/{0}'.format(
+                self.bamboo_server, build_plan_key
+            )
+        )
 
-        url = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(server, build_plan_key)
+        url = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(self.bamboo_server, build_plan_key)
         self.rest_post(url, payload={})
 
 
@@ -2537,7 +2553,7 @@ class PullRequestTriggerJob(AutomationJob):
             plan_key = self.get_build_plan_key(source_branch, target_branch)
             # Trigger build
             # TODO
-            self.bamboo_utils.bamboo_trigger_build_plan(server, plan_key)
+            self.bamboo_utils.bamboo_trigger_build_plan(plan_key)
         except Exception:
             return False
         else:
