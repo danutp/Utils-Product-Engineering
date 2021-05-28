@@ -2015,7 +2015,7 @@ class BambooUtils(AtlassianUtils):
         """
 
         print(
-            'Posting build plan to Bamboo queue: https://{0}.sw.nxp.com/browse/{0}'.format(
+            'Posting build plan to Bamboo queue: https://{0}.sw.nxp.com/browse/{1}'.format(
                 self.bamboo_server, build_plan_key
             )
         )
