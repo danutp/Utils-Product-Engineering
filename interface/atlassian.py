@@ -6,53 +6,30 @@ This script contains the interface over Atlassian Rest API: JIRA, Bitbucket, Bam
 
 
 from __future__ import division  # enables floating point division
-import _ssl
+import base64
 import inspect
 import itertools
 import json
-import logging
 import os
 import re
 import sqlite3
 import time
-import requests
+import threading
 
+from bs4 import BeautifulSoup
 from collections import defaultdict, namedtuple
 from distutils import util
-from helper.git import GitUtils
 from helper.pull_request import ReviewStatistics
-from helper.rest import RESTServiceConfiguration, RESTUtils
+from helper.rest import HttpStatusCodes, RESTUtils
 from helper.utils import Utils
 from multiprocessing.pool import ThreadPool
 from multiprocessing import cpu_count
 from random import randrange
 from service import AutomationJob
-from ssl import SSLContext
-from time import sleep
 from tldextract import extract
 
 
 __copyright__ = "Copyright 2019-2021 NXP"
-
-
-HEADERS = {'Content-Type': 'application/json'}
-
-# Timeout before repeat request
-REQUEST_RETRY_DELAY_SEC = 10
-# Timeout before request will be rejected
-REQUEST_TIMEOUT_SEC = 60
-
-# Status codes
-SUCCESS_OK = 200
-SUCCESS_CREATED = 201
-SUCCESS_NO_CONTENT = 204
-
-FAIL_BAD_REQUEST = 400
-FAIL_UNAUTHORIZED = 401
-FAIL_FORBIDDEN = 403
-FAIL_NOT_FOUND = 404
-FAIL_CONFLICT = 409
-FAIL_UNSUPPORTED = 415
 
 
 class BitbucketTag(object):
@@ -67,12 +44,28 @@ class BitbucketTag(object):
 
 class AtlassianAccount(object):
     """
-    POD class which stores credentials for using :class:`AtlassianUtils` services
+    Class that stores credentials for using AtlassianUtils services
     """
 
-    def __init__(self, user_account=None, pwd=None):
-        self.user_account = user_account
-        self.pwd = pwd
+    def __init__(self):
+        self.__username, self.__password = self.__load_credentials()
+
+    @property
+    def username(self):
+        return self.__username
+
+    @property
+    def password(self):
+        return self.__password
+
+    @staticmethod
+    def __load_credentials():
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               'atlassian',
+                               'auth_credentials.json')) as fd:
+            credentials = json.loads(fd.read())
+
+        return credentials['username'], base64.b64decode(credentials['password'])
 
 
 class AtlassianUtils(object):
@@ -83,136 +76,171 @@ class AtlassianUtils(object):
     # CONSTANTS
 
     # JIRA constants:
+
+    # JIRA link
+    JIRA_URL = 'https://jira.sw.nxp.com/'
+
     # JIRA authentication URL
-    JIRA_AUTH_URL = 'https://jira.sw.nxp.com/rest/auth/latest/session'
+    JIRA_AUTH_URL = JIRA_URL + 'rest/auth/latest/session'
 
     # Information about a Jira issue
-    JIRA_DEFECT_INFO_URL = 'https://jira.sw.nxp.com/rest/api/latest/issue/{0}'
+    JIRA_DEFECT_INFO_URL = JIRA_URL + 'rest/api/latest/issue/{0}'
 
     # Information about the editable fields of a JIRA defect
-    JIRA_DEFECT_EDIT_INFO_URL = 'https://jira.sw.nxp.com/rest/api/latest/issue/{0}/editmeta'
+    JIRA_DEFECT_EDIT_INFO_URL = JIRA_URL + 'rest/api/latest/issue/{0}/editmeta'
 
     # Information about possible status transitions for Jira issues
-    JIRA_DEFECT_TRANSITIONS_INFO_URL = 'https://jira.sw.nxp.com/rest/api/latest/issue/{0}/transitions'
+    JIRA_DEFECT_TRANSITIONS_INFO_URL = JIRA_URL + 'rest/api/latest/issue/{0}/transitions'
 
     # Information about possible status transitions for Jira issues with the required transition fields expanded
     JIRA_DEFECT_TRANSITIONS_INFO_EXTENDED_URL = (
-        'https://jira.sw.nxp.com/rest/api/latest/issue/{0}/transitions?expand=transitions.fields'
+        JIRA_URL + 'rest/api/latest/issue/{0}/transitions?expand=transitions.fields'
     )
 
     # Run a query in JIRA using JQL
-    JIRA_QUERY_URL = 'https://jira.sw.nxp.com/rest/api/latest/search'
+    JIRA_QUERY_URL = JIRA_URL + 'rest/api/latest/search'
 
     # Search for JIRA users which are assignable to a project
-    JIRA_USER_SEARCH_URL = 'https://jira.sw.nxp.com/rest/api/latest/user/assignable/search?project={0}{1}'
+    JIRA_USER_SEARCH_URL = JIRA_URL + 'rest/api/latest/user/assignable/search?project={0}{1}'
 
     # BITBUCKET constants:
-    # Creates a tag in the specified repository
-    BITBUCKET_SET_TAG_URL = 'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/tags'
 
-    # Get all tags from the spec ified repository
-    BITBUCKET_GET_TAGS_URL = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/tags?start={2}&limit=1000'
-    )
+    # Bitbucket link
+    BITBUCKET_URL = 'https://bitbucket.sw.nxp.com/'
+
+    # Creates a tag in the specified repository
+    BITBUCKET_SET_TAG_URL = BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/tags'
+
+    # Get all tags from the specified repository
+    BITBUCKET_GET_TAGS_URL = BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/tags?start={2}&limit=1000'
 
     # Get all branches from the specified repository
     BITBUCKET_GET_BRANCHES_URL = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/branches?start={2}&limit=1000'
+        BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/branches'
+    )
+
+    # Get all branches from the specified repository - paged
+    BITBUCKET_GET_BRANCHES_PAGED_URL = (
+        BITBUCKET_GET_BRANCHES_URL + '?start={2}&limit=1000'
     )
 
     # Get branch details
-    BITBUCKET_GET_BRANCH_DETAILS = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/branches?details=true&filterText={2}'
+    BITBUCKET_GET_BRANCH_DETAILS_URL = (
+        BITBUCKET_GET_BRANCHES_URL + '?details=true&filterText={2}'
     )
 
     # Get all changes from the specified repository and branch
     BITBUCKET_GET_CHANGES_URL = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/compare/changes'
-        '?from={2}&start={3}&limit=1000'
+            BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/compare/changes?from={2}&start={3}&limit=1000'
     )
 
     # Get all commits from the specified repository
-    BITBUCKET_GET_COMMITS_URL = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/commits?start={2}&limit=1000'
-    )
+    BITBUCKET_GET_COMMITS_URL = BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/commits?start={2}&limit=1000'
 
     # Get all commits between two commits
     BITBUCKET_GET_COMMITS_RANGE_URL = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/commits'
-        '?since={2}&until={3}&start={4}&limit=1000'
+            BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/commits?since={2}&until={3}&start={4}&limit=1000'
     )
 
     # Queries pull requests for a branch
-    BITBUCKET_GET_PULL_REQUESTS = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/pull-requests'
-        '?at=refs/heads/{2}&direction={3}&state={4}&start={5}&limit=1000'
+    BITBUCKET_GET_PULL_REQUESTS_URL = (
+        BITBUCKET_URL +
+        'rest/api/latest/projects/{0}/repos/{1}/pull-requests?at=refs/heads/{2}&direction={3}&state={4}'
+        '&start={5}&limit=1000'
     )
 
     # Queries all pull requests
-    BITBUCKET_GET_ALL_PULL_REQUESTS = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/pull-requests'
-        '?direction={2}&state={3}&start={4}&limit=1000'
+    BITBUCKET_GET_ALL_PULL_REQUESTS_URL = (
+        BITBUCKET_URL +
+        'rest/api/latest/projects/{0}/repos/{1}/pull-requests?direction={2}&state={3}&start={4}&limit=1000'
     )
 
     # Get a pull request's activities
-    GET_PULL_REQUEST_ACTIVITY_URI = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}/activities'
-        '?start={3}&limit=1000'
+    BITBUCKET_GET_PULL_REQUEST_ACTIVITY_URL = (
+        BITBUCKET_URL +
+        'rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}/activities?start={3}&limit=1000'
+    )
+
+    # Pull request merge/get merge info
+    BITBUCKET_PULL_REQUEST_MERGE_URL = (
+        BITBUCKET_URL +
+        'rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}/merge'
     )
 
     # Pull request get/set info
-    BITBUCKET_PULL_REQUEST_URL = 'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}'
+    BITBUCKET_PULL_REQUEST_INFO_URL = BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}'
 
     # Pull request get changes
-    BITBUCKET_PULL_REQUEST_GET_CHANGES_URL = (
-        'https://bitbucket.sw.nxp.com/rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}/changes'
-        '?start={3}&limit=1000'
+    BITBUCKET_GET_PULL_REQUEST_CHANGES_URL = (
+            BITBUCKET_URL + 'rest/api/latest/projects/{0}/repos/{1}/pull-requests/{2}/changes'
     )
+
+    # Pull request get paged changes
+    BITBUCKET_PULL_REQUEST_PAGED_CHANGES_URL = BITBUCKET_GET_PULL_REQUEST_CHANGES_URL + '?start={3}&limit=1000'
 
     # Get all files from a specified repository
-    BITBUCKET_GET_FILES_URL = (
-        'https://bitbucket.sw.nxp.com/rest/api/1.0/projects/{0}/repos/{1}/browse?start={2}&limit=1000'
-    )
+    BITBUCKET_GET_FILES_URL = BITBUCKET_URL + 'rest/api/1.0/projects/{0}/repos/{1}/browse?start={2}&limit=1000'
 
     # Get a file from a specified repository
-    BITBUCKET_GET_FILE_URL = 'https://bitbucket.sw.nxp.com/rest/api/1.0/projects/{0}/repos/{1}/browse/{2}'
-
+    BITBUCKET_GET_FILE_URL = BITBUCKET_URL + 'rest/api/1.0/projects/{0}/repos/{1}/browse/{2}'
 
     # BAMBOO constants:
-    BAMBOO_SERVER = "bamboo1"
 
     # Bamboo plan link
-    BAMBOO_URL = 'https://{0}.sw.nxp.com/'.format(BAMBOO_SERVER)
+    BAMBOO_URL = 'https://{0}.sw.nxp.com/'
 
     # Bamboo queue post build to queue
-    BAMBOO_QUEUE_POST_REQUEST_URL = BAMBOO_URL + 'rest/api/latest/queue/{0}'
+    BAMBOO_QUEUE_POST_REQUEST_URL = BAMBOO_URL + 'rest/api/latest/queue/{1}'
 
     # Bamboo request specifying the branch for plan
-    BAMBOO_PLAN_BRANCH_REQUEST_URL = BAMBOO_URL + 'rest/api/latest/plan/{0}/branch/{1}.json'
+    BAMBOO_PLAN_BRANCH_REQUEST_URL = BAMBOO_URL + 'rest/api/latest/plan/{1}/branch/{2}.json'
 
-    BAMBOO_GET_PLAN_BRANCHES_INFO = BAMBOO_URL + 'rest/api/latest/plan/{0}/branch.json?max-result=1000'
+    # Bamboo request for getting plan branches
+    BAMBOO_GET_PLAN_BRANCHES_INFO_URL = BAMBOO_URL + 'rest/api/latest/plan/{1}/branch.json?max-result=1000'
 
+    # Bamboo request for triggering plan
+    BAMBOO_TRIGGER_PLAN_URL = BAMBOO_URL + 'rest/api/latest/queue/'
+
+    # Bamboo request for stopping plan
+    BAMBOO_STOP_PLAN_URL = BAMBOO_URL + 'build/admin/stopPlan.action'
+
+    # Bamboo request for getting plan results
+    BAMBOO_PLAN_RESULTS_URL = BAMBOO_URL + 'rest/api/latest/result/'
+
+    # Bamboo request for querying plan
+    BAMBOO_QUERY_PLAN_URL = BAMBOO_URL + 'rest/api/latest/plan/'
+
+    # Bamboo request for querying plan queue
+    BAMBOO_LATEST_QUEUE_URL = BAMBOO_URL + 'rest/api/latest/queue.json'
+
+    # Bamboo request for getting artifact
+    BAMBOO_ARTIFACT_URL = BAMBOO_URL + 'browse/{1}/artifact/{2}/{3}/'
+
+    # Bamboo request for retrieving unfinished builds
+    BAMBOO_GET_UNFINISHED_BUILDS = BAMBOO_URL + 'rest/api/{1}/result/{2}{3}?includeAllStates=true&buildstate=Unknown'
+
+    # Bamboo request for retrieving Bamboo variables
+    BAMBOO_GET_BUILD_BAMBOO_VARS_INFO = (
+            BAMBOO_URL + 'rest/api/{1}/result/{2}-{3}{4}?includeAllStates=true&expand=variables'
+    )
+
+    def __init__(self,
+                 project_key,
+                 account_info=AtlassianAccount()):
+
+        """
+        :param project_key: the unique project key (e.g. Jira)
+        :param account_info: The account info to use for any Atlassian, REST call based operations
+               By default it's a service account
+        """
+
+        self.project_key = project_key
+        self.account_info = account_info
 
     #
     # Each Bamboo variable is visible as an environment variable.
-    # The environment variable name is obtained from the Bamboo variable name prefixed with this string
+    # The environment variable name is obtained from the Bamboo variable name prefixed with this string: "bamboo_"
     #
-
-    def __init__(self,
-                 jira_project_key,
-                 account_info=AtlassianAccount('SVC_DEVTECH', 'nhR9p32aW8'),
-                 rest_service_configuration=RESTServiceConfiguration(SSLContext(_ssl.PROTOCOL_TLSv1_2))):
-
-        """
-        :param jira_project_key: the unique JIRA project key
-        :param account_info: The account info to use for any Atlassian, REST call based operations
-        By default it's a service account
-        :param rest_service_configuration: The configuration of the REST service used for any Atlassian operations
-        via REST calls. By default is a TLS based authentication REST service
-        """
-        self.jira_project_key = jira_project_key
-        self.account_info = account_info
-        self.rest_service_configuration = rest_service_configuration
 
     @staticmethod
     def get_env_var(key, env_variable_prefix='bamboo_', default_value=None):
@@ -223,6 +251,7 @@ class AtlassianUtils(object):
         :param default_value:  Returned in case environment variable doesn't exist. Default is None.
         :return: The value of the environment variable
         """
+
         environment_variable_value = Utils.get_env(
             '{0}{1}'.format(env_variable_prefix, key), default_value=default_value)
         return environment_variable_value.strip() if environment_variable_value else environment_variable_value
@@ -282,9 +311,10 @@ class AtlassianUtils(object):
         matching a given value.
         :param storage: Storage to seek in
         :param key: Matching key
-        :param value: Mathing value
+        :param value: Matching value
         :return:
         """
+
         for item in storage:
             if value in item[key]:
                 if 'children' in item:
@@ -294,46 +324,87 @@ class AtlassianUtils(object):
                 return [item]
         return None
 
-    def rest_get(self, uri):
+    @staticmethod
+    @RESTUtils.pack_response_to_client
+    def rest_get(url, headers=None, timeout=None, destination_file=None):
         """
         Runs a GET REST call on JIRA, Bitbucket or Bamboo
-        :param uri: REST service URI
+        :param url: REST service URL
+        :param headers: The headers to be included in query
+        :param timeout: The timeout to be used when waiting for response
+        :param destination_file: File where artifact will be downloaded in case of such a request
         :return: REST call response object
         """
-        return RESTUtils.get(self.rest_service_configuration,
-                             uri,
-                             self.account_info.user_account,
-                             self.account_info.pwd)
 
-    def rest_post(self, uri, payload):
+        if destination_file:
+            return RESTUtils.download(url, auth=AtlassianAccount(), timeout=timeout, destination=destination_file)
+
+        return RESTUtils.get(url,
+                             headers=headers,
+                             auth=AtlassianAccount(),
+                             timeout=timeout,
+                             destination_file=destination_file)
+
+    @staticmethod
+    @RESTUtils.pack_response_to_client
+    def rest_post(url, headers=None, payload=None, timeout=None):
         """
         Runs a POST REST call on JIRA
-        :param uri: REST service URI
+        :param url: REST service URL
+        :param headers: The headers to be included in query
         :param payload: Payload used by the call
+        :param timeout: The timeout to be used when waiting for response
         :return: REST call response object
         """
-        return RESTUtils.post(self.rest_service_configuration,
-                              uri,
-                              self.account_info.user_account,
-                              self.account_info.pwd, payload)
 
-    def rest_put(self, uri, payload):
+        return RESTUtils.post(url,
+                              headers=headers,
+                              auth=AtlassianAccount(),
+                              payload=payload,
+                              timeout=timeout)
+
+    @staticmethod
+    @RESTUtils.pack_response_to_client
+    def rest_put(url, headers=None, payload=None, timeout=None):
         """
         Runs a PUT REST call on JIRA
-        :param uri: REST service URI
+        :param url: REST service URL
+        :param headers: The headers to be included in query
         :param payload: Payload used by the call
+        :param timeout: The timeout to be used when waiting for response
         :return: REST call response object
         """
-        return RESTUtils.put(self.rest_service_configuration,
-                             uri,
-                             self.account_info.user_account,
-                             self.account_info.pwd, payload)
+
+        return RESTUtils.put(url,
+                             headers=headers,
+                             auth=AtlassianAccount(),
+                             payload=payload,
+                             timeout=timeout)
+
+    @staticmethod
+    @RESTUtils.pack_response_to_client
+    def rest_delete(url, headers=None, payload=None, timeout=None):
+        """
+        Runs a POST REST call on JIRA
+        :param url: REST service URL
+        :param headers: The headers to be included in query
+        :param payload: Payload used by the call
+        :param timeout: The timeout to be used when waiting for response
+        :return: REST call response object
+        """
+
+        return RESTUtils.delete(url,
+                                headers=headers,
+                                auth=AtlassianAccount(),
+                                payload=payload,
+                                timeout=timeout)
 
 
 class JiraUtils(AtlassianUtils):
 
-    def __init__(self, jira_project_key):
-        super(JiraUtils, self).__init__(jira_project_key)
+    def __init__(self, project_key):
+
+        super(JiraUtils, self).__init__(project_key)
 
     @staticmethod
     def jira_get_jira_ids(jql_result):
@@ -342,6 +413,7 @@ class JiraUtils(AtlassianUtils):
         :param jql_result: the JQL execution result
         :return:
         """
+
         result = []
         for item in jql_result:
             result.append(item['key'])
@@ -355,10 +427,11 @@ class JiraUtils(AtlassianUtils):
         :param fields_values_dict: dictionary containing <field, value> tuples
         :return: The formatted payload to be used in the field modification using REST API
         """
+
         payload = dict()
         payload['fields'] = {}
-        for key in fields_values_dict.keys():
-            payload['fields'][key] = fields_values_dict[key]
+        for key, value in fields_values_dict.items():
+            payload['fields'][key] = value
         return payload
 
     @staticmethod
@@ -369,19 +442,26 @@ class JiraUtils(AtlassianUtils):
         :param value: field value
         :return: The formatted payload to be used in the field modification using REST API
         """
+
         return JiraUtils.jira_generate_defect_fields_custom_values(dict([(field, value)]))
 
     def jira_generate_defect_field_allowed_value(self, jira_id, field, value):
         """
-        Generates an allowed value [in JSON format] to be used for a JIRA defect field modification
+        Generates an allowed value structure to be used for a JIRA defect field modification
         :param jira_id: JIRA ID
         :param field: field to be modified
         :param value: field value
         :return: The payload to be used with a REST API call in order to set the JIRA defect field value
         """
-        uri = AtlassianUtils.JIRA_DEFECT_EDIT_INFO_URL.format(jira_id)
-        response = self.rest_get(uri)
-        data = json.loads(response.read())
+
+        url = AtlassianUtils.JIRA_DEFECT_EDIT_INFO_URL.format(jira_id)
+        response = self.rest_get(url)
+        if response != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError(
+                'Cannot get defect information for jira id "{0}": {1}'.format(
+                    jira_id, response.content)
+            )
+        data = json.loads(response.content)
 
         payload = dict()
         payload['fields'] = {}
@@ -399,25 +479,32 @@ class JiraUtils(AtlassianUtils):
         [as defined in the issue fields metadata]
         :return: The response code of the REST API request
         """
-        if custom is True:
+
+        if custom:
             payload = JiraUtils.jira_generate_defect_field_custom_value(field, value)
         else:
             payload = self.jira_generate_defect_field_allowed_value(jira_id, field, value)
 
-        uri = AtlassianUtils.JIRA_DEFECT_INFO_URL.format(jira_id)
-        response = self.rest_put(uri, payload)
-        return response.getcode()
+        url = AtlassianUtils.JIRA_DEFECT_INFO_URL.format(jira_id)
+        response = self.rest_put(url, payload=payload)
+        return response.status_code
 
     def jira_get_transition_id(self, jira_id, to_status):
         """
-        Gets a the transition ID of a JIRA defect based on its transition metadata description
+        Gets the transition ID of a JIRA defect based on its transition metadata description
         :param jira_id: JIRA ID
         :param to_status: Status to which to transition to
         :return: The transition ID used to transition to the given status, or None if no such transition is defined
         """
-        uri = AtlassianUtils.JIRA_DEFECT_TRANSITIONS_INFO_EXTENDED_URL.format(jira_id)
-        response = self.rest_get(uri)
-        data = json.loads(response.read())
+
+        url = AtlassianUtils.JIRA_DEFECT_TRANSITIONS_INFO_EXTENDED_URL.format(jira_id)
+        response = self.rest_get(url)
+        if response != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError(
+                'Cannot get jira transition id for "{0}" id: {1}'.format(
+                    jira_id, response.content)
+            )
+        data = json.loads(response.content)
 
         for transition in data['transitions']:
             if transition['to']['name'] == to_status:
@@ -438,6 +525,7 @@ class JiraUtils(AtlassianUtils):
         This is the payload to use for the update operation
         :return: REST call error code or None if the transition is not allowed
         """
+
         payload = dict()
         payload['transition'] = {}
         transition_id = self.jira_get_transition_id(jira_id, to_status)
@@ -448,9 +536,9 @@ class JiraUtils(AtlassianUtils):
 
         payload = dict(itertools.chain(payload.iteritems(), change_set.iteritems()))  # merge the 2 dictionaries
 
-        uri = AtlassianUtils.JIRA_DEFECT_TRANSITIONS_INFO_URL.format(jira_id)
-        response = self.rest_post(uri, payload)
-        return response.getcode()
+        url = AtlassianUtils.JIRA_DEFECT_TRANSITIONS_INFO_URL.format(jira_id)
+        response = self.rest_post(url, payload=payload)
+        return response.status_code
 
     def jira_get_defect_status(self, jira_id):
         """
@@ -458,6 +546,7 @@ class JiraUtils(AtlassianUtils):
         :param jira_id: JIRA ID of whose status to seek for
         :return: The JIRA ID status
         """
+
         return self.jira_get_field_value_by_name(jira_id, 'status')
 
     def jira_get_field_value_by_name(self, jira_id, field_id):
@@ -467,6 +556,7 @@ class JiraUtils(AtlassianUtils):
         :param field_id: Field to retrieve the value of
         :return: name key from the value (dict) of the field
         """
+
         return self.jira_get_field_value(jira_id, field_id)['name']
 
     def jira_get_field_value(self, jira_id, field_id):
@@ -475,9 +565,15 @@ class JiraUtils(AtlassianUtils):
         :param jira_id: JIRA ID
         :param field_id: Field to retrieve the value of
         """
-        uri = AtlassianUtils.JIRA_DEFECT_INFO_URL.format(jira_id)
-        response = self.rest_get(uri)
-        data = json.loads(response.read())
+
+        url = AtlassianUtils.JIRA_DEFECT_INFO_URL.format(jira_id)
+        response = self.rest_get(url)
+        if response != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError(
+                'Cannot get jira field value for "{0}" id: {1}'.format(
+                    jira_id, response.content)
+            )
+        data = json.loads(response.content)
 
         return data['fields'][field_id]
 
@@ -493,13 +589,18 @@ class JiraUtils(AtlassianUtils):
             for key in filters.keys():
                 query += '&{0}={1}'.format(key, filters[key])
 
-        uri = AtlassianUtils.JIRA_USER_SEARCH_URL.format(self.jira_project_key, query)
-        response = self.rest_get(uri)
-        return json.loads(response.read())
+        url = AtlassianUtils.JIRA_USER_SEARCH_URL.format(self.project_key, query)
+        response = self.rest_get(url)
+        if response != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError(
+                'Cannot get jira users for project "{0}": {1}'.format(
+                    self.project_key, response.content)
+            )
+        return json.loads(response.content)
 
     def jira_is_user_assignable(self, user_id):
         """
-        Determines is a given user id is assignable [can be used to fill in JIRA defect fields]
+        Determines if a given user id is assignable [can be used to fill in JIRA defect fields]
         in the context of the current project
         :param user_id: JIRA user id
         :return: True if the user is assignable, False otherwise
@@ -512,7 +613,7 @@ class JiraUtils(AtlassianUtils):
             raise Exception('Found multiple [{0}] definitions for the same user: {1}'.format(count, user_id))
 
         if count == 0:
-            print('User {0} is not assignable for project {1}'.format(user_id, self.jira_project_key))
+            print('User {0} is not assignable for project {1}'.format(user_id, self.project_key))
             return False
 
         if users[0]['active'] == 'false':
@@ -528,13 +629,18 @@ class JiraUtils(AtlassianUtils):
         :param max_results: Maximum amount of results to be returned, if None all results will be returned
         :return: The JSON result of the JQL query
         """
+
         payload = {'jql': query}
-        if max_results is not None:
+        if max_results:
             payload['maxResults'] = '{0}'.format(max_results)
 
-        response = self.rest_post(AtlassianUtils.JIRA_QUERY_URL, payload)
-        data = json.loads(response.read())
-        if max_results is not None:
+        response = self.rest_post(AtlassianUtils.JIRA_QUERY_URL, payload=payload)
+        if response != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError(
+                'Cannot run query "{0}": {1}'.format(query, response.content)
+            )
+        data = json.loads(response.content)
+        if max_results:
             return data['issues']
 
         total_results = int(data['total'])
@@ -544,7 +650,7 @@ class JiraUtils(AtlassianUtils):
             payload = {'jql': query,
                        'startAt': '{0}'.format(total_results - remaining)}
             response = self.rest_post(AtlassianUtils.JIRA_QUERY_URL, payload=payload)
-            data['issues'].extend(json.loads(response.read())['issues'])
+            data['issues'].extend(json.loads(response.content)['issues'])
             remaining -= max_results
 
         return data['issues']
@@ -555,6 +661,7 @@ class JiraUtils(AtlassianUtils):
         :param devices: A list of devices to which to match the Fix Version(s) value of the Resolved JIRA defects
         :return: a map <indirectly_fixed_jira_defect, list of referenced jira_defects in resolution text>
         """
+
         filters = dict()
         filters['status'] = ['Resolved']
         filters['resolution'] = ['"Fixed No Action Taken"']
@@ -587,7 +694,7 @@ class JiraUtils(AtlassianUtils):
                     print('JIRA ID {0} resolution text is empty. Nothing to seek for.'.format(defect_id))
                     continue
 
-                pattern = '({0}-[0-9]+)'.format(self.jira_project_key)
+                pattern = '({0}-[0-9]+)'.format(self.project_key)
                 print('Seeking for referenced JIRA IDs in the resolution text of JIRA defect {0} which is "{1}"'.
                       format(defect_id, resolution_text))
                 defects = list(set(re.findall(pattern, resolution_text)))
@@ -615,6 +722,7 @@ class JiraUtils(AtlassianUtils):
         :param statuses: Defects statuses filter, based on which to filter the JIRA defects
         :return: The list of JIRA defects info
         """
+
         return self.jira_get_defects_by_filter('status', statuses)
 
     def jira_get_defects_by_filter(self, filter_name, filter_values):
@@ -624,8 +732,10 @@ class JiraUtils(AtlassianUtils):
         :param filter_values: Filter values
         :return: The list of filtered JIRA defects info
         """
+
         filters = dict()
         filters[filter_name] = filter_values
+
         return self.jira_get_defects_by_filters(filters)
 
     def jira_get_defects_by_filters(self, filters):
@@ -636,7 +746,8 @@ class JiraUtils(AtlassianUtils):
         The filters will be ANDed
         :return: The list of filtered JIRA defects info
         """
-        query = 'project = {0}'.format(self.jira_project_key)
+
+        query = 'project = {0}'.format(self.project_key)
 
         f = dict(filters)
         for f_name in f.keys():
@@ -655,8 +766,8 @@ class JiraUtils(AtlassianUtils):
 
 class BitbucketUtils(AtlassianUtils):
 
-    def __init__(self, jira_project_key):
-        super(BitbucketUtils, self).__init__(jira_project_key)
+    def __init__(self, project_key):
+        super(BitbucketUtils, self).__init__(project_key)
 
     def bitbucket_get_all_items_from_repo(self, repo_slug, repo_key):
         """Get all items from a specific repo
@@ -664,32 +775,31 @@ class BitbucketUtils(AtlassianUtils):
         :param repo_slug: URL-friendly version of a repository name, generated by Bitbucket for use in the URL
         :param repo_key: Repo key
         :return: Yields every item from repo
+        :raise RuntimeError if the repo could not be read
         """
 
-        try:
-            next_page_start = 0
-            while True:
-                uri = AtlassianUtils.BITBUCKET_GET_FILES_URL.format(repo_slug, repo_key, next_page_start)
+        next_page_start = 0
+        while True:
+            url = AtlassianUtils.BITBUCKET_GET_FILES_URL.format(repo_slug, repo_key, next_page_start)
 
-                response = self.rest_get(uri)
-                data = json.loads(response.read())
+            response = self.rest_get(url)
+            if response != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError(
+                    'Cannot read repo "{0}" content: {1}'.format(
+                        '{0}-{1}'.format(repo_slug, repo_key), response.content)
+                )
+            data = json.loads(response.content)
 
-                children = data.get('children', {})
-                values = children.get('values', [])
+            children = data.get('children', {})
+            values = children.get('values', [])
 
-                for value in values:
-                    yield value
+            for value in values:
+                yield value
 
-                if children['isLastPage']:
-                    break
+            if children['isLastPage']:
+                break
 
-                next_page_start = children['nextPageStart']
-
-            return
-        except:  # noqa: E722
-            raise ValueError(
-                'Cannot read repo "{repo}" content due to exception'.format(repo="{0}-{1}".format(repo_slug, repo_key))
-            )
+            next_page_start = children['nextPageStart']
 
     def bitbucket_get_text_file_content(self, repo_slug, repo_key, file_path):
         """
@@ -699,12 +809,16 @@ class BitbucketUtils(AtlassianUtils):
         :param file_path: path of the file in repo's context
         :return: The content of the file. Exception is raised in case file is binary
         """
-        uri = AtlassianUtils.BITBUCKET_GET_FILE_URL.format(repo_slug, repo_key, file_path)
 
-        response = self.rest_get(uri)
-        data = json.loads(response.read())
+        url = AtlassianUtils.BITBUCKET_GET_FILE_URL.format(repo_slug, repo_key, file_path)
+
+        response = self.rest_get(url)
+        if response != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Cannot read file from "{0}": {1}'.format(url, response.content))
+
+        data = json.loads(response.content)
         # if file is not binary, the 'binary' key is not present in the JSON response, so we default the return to False
-        if data.get('binary', False):
+        if not Utils.is_text(data):
             raise Exception('File {0} is not a text file'.format(file_path))
 
         lines = data['lines']  # get the lines array
@@ -725,30 +839,28 @@ class BitbucketUtils(AtlassianUtils):
         :return: A @BitbucketTag instance corresponding to the given tag, or None if the tag does not exist
         """
 
-        # Ignore 'self.jira_project_key' and use 'project_key' to avoid re-initialization for different projects
-        project_key = project_key or self.jira_project_key
+        # Ignore 'self.project_key' and use 'project_key' to avoid re-initialization for different projects
+        project_key = project_key or self.project_key
 
-        try:
-            next_page_start = 0
-            while True:
-                uri = AtlassianUtils.BITBUCKET_GET_TAGS_URL.format(project_key, repo, next_page_start)
-                response = self.rest_get(uri)
-                data = json.loads(response.read())
+        next_page_start = 0
+        while True:
 
-                tags = data['values']
-                for t in tags:
-                    if t['displayId'] == tag:
-                        return BitbucketTag(t['displayId'], t['latestCommit'])
+            url = AtlassianUtils.BITBUCKET_GET_TAGS_URL.format(project_key, repo, next_page_start)
+            response = self.rest_get(url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError('Tag {0} info could not be read: {1}'.format(tag, response.content))
 
-                if data['isLastPage']:
-                    break
+            data = json.loads(response.content)
 
-                next_page_start = data['nextPageStart']
+            tags = data['values']
+            for t in tags:
+                if t['displayId'] == tag:
+                    return BitbucketTag(t['displayId'], t['latestCommit'])
 
-            return None
-        except:  # noqa: E722
-            print('Tag {0} info not be read due to exception'.format(tag))
-            raise
+            if data['isLastPage']:
+                break
+
+            next_page_start = data['nextPageStart']
 
     def bitbucket_get_latest_tag(self, repo):
         """
@@ -757,19 +869,18 @@ class BitbucketUtils(AtlassianUtils):
         :return: A @BitbucketTag instance corresponding to the latest tag set on the repo or None if no such tag exists
         """
 
-        try:
-            uri = AtlassianUtils.BITBUCKET_GET_TAGS_URL.format(self.jira_project_key, repo, 0)
-            response = self.rest_get(uri)
-            data = json.loads(response.read())
+        url = AtlassianUtils.BITBUCKET_GET_TAGS_URL.format(self.project_key, repo, 0)
+        response = self.rest_get(url)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Tags could not be read: {0}'.format(response.content))
 
-            tags = data['values']
-            if not tags:
-                return None
+        data = json.loads(response.content)
 
-            return BitbucketTag(data['values'][0]['displayId'], data['values'][0]['latestCommit'])
-        except:  # noqa: E722
-            print('Tags could not be read due to exception')
-            raise
+        tags = data['values']
+        if not tags:
+            return None
+
+        return BitbucketTag(data['values'][0]['displayId'], data['values'][0]['latestCommit'])
 
     def bitbucket_tag(self, repo, branch, tag, check_tag=True, message=''):
         """
@@ -780,9 +891,10 @@ class BitbucketUtils(AtlassianUtils):
         :param check_tag: Checks if the tag already exists and raises an Exception if so
         :param message: A message relevant for the tag
         """
+
         print(r'Tagging the {0}\{1} branch with tag {2}'.format(repo, branch, tag))
 
-        if check_tag is True and self.bitbucket_get_tag(repo, tag) is not None:
+        if check_tag and self.bitbucket_get_tag(repo, tag):
             raise Exception('Tag {0} already exists on repo {1}'.format(tag, repo))
 
         if len(tag) > 100:
@@ -795,12 +907,11 @@ class BitbucketUtils(AtlassianUtils):
             'startPoint': branch,
             'type': 'ANNOTATED'
         }
-        try:
-            uri = AtlassianUtils.BITBUCKET_SET_TAG_URL.format(self.jira_project_key, repo)
-            self.rest_post(uri, payload)
-        except:  # noqa: E722
-            print('Tag could not be applied due to exception')
-            raise
+        url = AtlassianUtils.BITBUCKET_SET_TAG_URL.format(self.project_key, repo)
+
+        response = self.rest_post(url, payload=payload)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Failed to set tag {0}: {1}'.format(tag, response.content))
 
     def bitbucket_get_latest_commit_of_branch(self, repo, branch):
         """
@@ -810,28 +921,28 @@ class BitbucketUtils(AtlassianUtils):
         :return: The latest commit of the branch or None of there's no commit on the branch
         """
 
-        try:
-            next_page_start = 0
-            while True:
-                uri = AtlassianUtils.BITBUCKET_GET_BRANCHES_URL.format(self.jira_project_key, repo, next_page_start)
-                response = self.rest_get(uri)
-                data = json.loads(response.read())
+        next_page_start = 0
+        while True:
 
-                branches = data['values']
-                for b in branches:
-                    if b['displayId'] == branch:
-                        return b['latestCommit']
+            url = AtlassianUtils.BITBUCKET_GET_BRANCHES_PAGED_URL.format(self.project_key, repo, next_page_start)
+            response = self.rest_get(url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError('Bitbucket repository {0} branches could not be read: {1}'.format(
+                    repo, response.content)
+                )
+            data = json.loads(response.content)
 
-                if data['isLastPage']:
-                    break
+            branches = data['values']
+            for b in branches:
+                if b['displayId'] == branch:
+                    return b['latestCommit']
 
-                next_page_start = data['nextPageStart']
+            if data['isLastPage']:
+                break
 
-            print('A branch named {0} was not found'.format(branch))
-            return None
-        except:  # noqa: E722
-            print('Bitbucket repository {0} branches could not be read due to exception'.format(repo))
-            raise
+            next_page_start = data['nextPageStart']
+
+        print('A branch named {0} was not found'.format(branch))
 
     def bitbucket_get_next_commit(self, repo, commit_id):
         """
@@ -841,33 +952,31 @@ class BitbucketUtils(AtlassianUtils):
         :return: The next commit after a commit or None if no such commit exists
         """
 
-        try:
-            previous_commit_id = None
-            next_page_start = 0
-            while True:
-                uri = AtlassianUtils.BITBUCKET_GET_COMMITS_URL.format(self.jira_project_key, repo, next_page_start)
-                response = self.rest_get(uri)
-                data = json.loads(response.read())
+        previous_commit_id = None
+        next_page_start = 0
+        while True:
+            url = AtlassianUtils.BITBUCKET_GET_COMMITS_URL.format(self.project_key, repo, next_page_start)
+            response = self.rest_get(url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError(
+                    'The next commit after commit {commit_id} from Bitbucket repository {repo} '
+                    'could not be retrieved: {error}'.format(commit_id=commit_id, repo=repo, error=response.content)
+                )
 
-                commits = data['values']
-                for c in commits:
-                    if c['id'] == commit_id:
-                        return previous_commit_id
-                    previous_commit_id = c['id']
+            data = json.loads(response.content)
 
-                if data['isLastPage']:
-                    break
+            commits = data['values']
+            for c in commits:
+                if c['id'] == commit_id:
+                    return previous_commit_id
+                previous_commit_id = c['id']
 
-                next_page_start = data['nextPageStart']
+            if data['isLastPage']:
+                break
 
-            print('There is no next commit after commit {0} from Bitbucket repository {1}'.format(commit_id, repo))
-            return None
-        except:  # noqa: E722
-            print(
-                'The next commit after commit {0} from Bitbucket repository {1} '
-                'could not be retrieved due to exception'.format(commit_id, repo)
-            )
-            raise
+            next_page_start = data['nextPageStart']
+
+        print('There is no next commit after commit {0} from Bitbucket repository {1}'.format(commit_id, repo))
 
     def bitbucket_get_next_commit_after_tag(self, repo, tag):
         """
@@ -876,29 +985,28 @@ class BitbucketUtils(AtlassianUtils):
         :param tag: Tag which to seek the commit after
         :return: The next commit after a tag or None if such commit does not exist
         """
+
         try:
             return self.bitbucket_get_next_commit(repo, tag.latest_commit)
-        except:  # noqa: E722
-            print(
-                'The first commit after tag{0} from Bitbucket repository {1} not be retrieved due to exception'.format(
-                    tag, repo)
-            )
+        except RuntimeError:
+            print('Failed to get the next commit after the specified tag {0}'.format(tag.latest_commit))
             raise
 
     def bitbucket_get_next_commit_after_latest_tag(self, repo):
         """
-        Retrieves the next commit hash the latest tag of a given repo
+        Retrieves the next commit hash after the latest tag of a given repo
         :param repo: Name of the BITBUCKET repository where to seek the commit
         :return: The next commit after the latest  tag or None if such commit does not exist
         """
+
+        latest_tag = self.bitbucket_get_latest_tag(repo)
+        if not latest_tag:
+            raise RuntimeError('Could not get the latest tag for repo {0}'.format(repo))
+
         try:
-            latest_tag = self.bitbucket_get_latest_tag(repo)
             return self.bitbucket_get_next_commit_after_tag(repo, latest_tag)
-        except:  # noqa: E722
-            print(
-                'The first commit after latest tag of Bitbucket repository {0} not be retrieved due to exception'.format(
-                    repo)
-            )
+        except RuntimeError:
+            print('Failed to get the latest commit after the latest tag {0}'.format(latest_tag.latest_commit))
             raise
 
     def bitbucket_get_pull_request_change_set(self, repo, pr_id, path_filters=None):
@@ -916,50 +1024,47 @@ class BitbucketUtils(AtlassianUtils):
 
         :return: List of changed files with filters [if defined] applied
         """
-        try:
-            change_set = []
-            changes = []
-            next_page_start = 0
-            while True:
-                uri = AtlassianUtils.BITBUCKET_PULL_REQUEST_GET_CHANGES_URL.format(
-                    self.jira_project_key, repo, pr_id, next_page_start
-                )
-                response = self.rest_get(uri)
-                data = json.loads(response.read())
-                changes.extend(data['values'])
 
-                if not data['values']:
-                    break
-
-                if data['isLastPage']:
-                    break
-
-                next_page_start = data['nextPageStart']
-
-            for c in changes:
-                if path_filters is None:
-                    change_set.append(c['path']['toString'])
-                else:
-                    for k, v in path_filters.items():
-                        if k not in c['path'].keys():
-                            continue  # filter key is not defined in pull request change set keys -> skip it
-
-                        token = c['path'][k]
-                        # Either token matches a list element, or if not list, is identical match, or regex match
-                        try:
-                            if (isinstance(v, list) and token in v) \
-                                    or (not isinstance(v, list) and (token == v or re.match(v, token))):
-                                change_set.append(c['path']['toString'])
-                        except:  # noqa: E722
-                            raise 'Not supported filter value type for filter key: {0}'.format(k)
-
-            return change_set
-
-        except:  # noqa: E722
-            print(
-                'Change set of pull request id {0} from repo {1} could not be read due to exception'.format(pr_id, repo)
+        change_set = []
+        changes = []
+        next_page_start = 0
+        while True:
+            url = AtlassianUtils.BITBUCKET_PULL_REQUEST_PAGED_CHANGES_URL.format(
+                self.project_key, repo, pr_id, next_page_start
             )
-            raise
+            response = self.rest_get(url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError('Could not get change set for pull request {0}'.format(pr_id))
+
+            data = json.loads(response.content)
+            changes.extend(data['values'])
+
+            if not data['values']:
+                break
+
+            if data['isLastPage']:
+                break
+
+            next_page_start = data['nextPageStart']
+
+        for c in changes:
+            if path_filters is None:
+                change_set.append(c['path']['toString'])
+            else:
+                for k, v in path_filters.items():
+                    if k not in c['path'].keys():
+                        continue  # filter key is not defined in pull request change set keys -> skip it
+
+                    token = c['path'][k]
+                    # Either token matches a list element, or if not list, is identical match, or regex match
+                    try:
+                        if (isinstance(v, list) and token in v) \
+                                or (not isinstance(v, list) and (token == v or re.match(v, token))):
+                            change_set.append(c['path']['toString'])
+                    except:  # noqa: E722
+                        raise 'Not supported filter value type for filter key: {0}'.format(k)
+
+        return change_set
 
     def bitbucket_get_pull_request_activities_wrapper(self, args):
         """
@@ -967,6 +1072,7 @@ class BitbucketUtils(AtlassianUtils):
         :param args: list of arguments matching the arguments number of `bitbucket_get_pull_request_activities`
         :return: the pull request activities.
         """
+
         pr = args[0]
         repo = args[1]
 
@@ -979,6 +1085,7 @@ class BitbucketUtils(AtlassianUtils):
         :param args: list of arguments matching the arguments number of `bitbucket_get_pull_request_change_set`
         :return: the pull request in case it matches the change set filters, None otherwise.
         """
+
         pr = args[0]
         repo = args[1]
         branch = args[2]
@@ -989,8 +1096,6 @@ class BitbucketUtils(AtlassianUtils):
                 (newer_than_timestamp is None or pr['createdDate'] > newer_than_timestamp) and \
                 (self.bitbucket_get_pull_request_change_set(repo, pr['id'], change_set_path_filters)):
             return pr
-        else:
-            return None
 
     def bitbucket_get_changes(self, repo, branch):
         """
@@ -999,57 +1104,61 @@ class BitbucketUtils(AtlassianUtils):
         :param branch: Branch to retrieve the commits from
         :return: List of changed files
         """
-        try:
-            files_changed = []
-            next_page_start = 0
-            while True:
-                uri = AtlassianUtils.BITBUCKET_GET_CHANGES_URL.format(self.jira_project_key, repo, branch, next_page_start)
-                response = self.rest_get(uri)
-                data = json.loads(response.read())
 
-                changes = data['values']
-                for c in changes:
-                    files_changed.append(c['path']['toString'])
+        files_changed = []
+        next_page_start = 0
+        while True:
+            url = AtlassianUtils.BITBUCKET_GET_CHANGES_URL.format(self.project_key,
+                                                                  repo,
+                                                                  branch,
+                                                                  next_page_start)
+            response = self.rest_get(url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError('Could not get changes for branch {0}'.format(branch))
 
-                if data['isLastPage']:
-                    break
+            data = json.loads(response.content)
+            changes = data['values']
+            for c in changes:
+                files_changed.append(c['path']['toString'])
 
-                if not data['values']:
-                    break
+            if data['isLastPage']:
+                break
 
-                next_page_start = data['nextPageStart']
+            if not data['values']:
+                break
 
-            return files_changed
-        except:  # noqa: E722
-            print('Bitbucket repository {0} changes on branch {1} could not be read due to exception'.format(repo, branch))
-            raise
+            next_page_start = data['nextPageStart']
+
+        return files_changed
 
     def bitbucket_get_merge_targets_for_branch(self, repo, branch):
-        """
-        Gather target branches specified in pull requests given the source branch
+        """Gather target branches specified in pull requests given the source branch
         :param repo: Name of the BITBUCKET repository where to seek
         :param branch: Name of (source) branch
         :return: List of branch names targeted for merging, None if no pull request is found
         """
+
         try:
             pull_requests = self.bitbucket_get_pull_requests(repo, branch, 'OUTGOING', 'OPEN')
             if not pull_requests:
-                return None
+                return
 
             target_branches = [pr['toRef']['displayId'] for pr in pull_requests]
-
-            return None if not target_branches else target_branches
-
-        except:  # noqa: E722
+            return target_branches
+        except RuntimeError:
             print('Error retrieving target branches for branch {1} based on pull requests in {0}'.format(repo, branch))
             raise
 
-    def bitbucket_get_jira_ids_in_commits_range(self, repo, start_commit, end_commit, match_status=None):
-        """
+    def bitbucket_get_jira_ids_in_commits_range(self, repo, start_commit, end_commit, match_status=None,
+                                                ignore_missing=False, with_counts=False):
+        """Get the jira ids within the specified commit range
+        https://docs.atlassian.com/bitbucket-server/rest/7.12.1/bitbucket-rest.html#idp222
         :param repo: The Bitbucket repo where to seek the commits
         :param start_commit: The start commit
         :param end_commit: The end commit
-        :param match_status: A list of statuses based on which to filter the JIRA IDs.
+        :param match_status: A list of status based on which to filter the JIRA IDs
+        :param ignore_missing: Specify whether missing commits will be ignored
+        :param with_counts: Specify whether the total number of commits should be included
         If None, no filter will be applied
         :return: The range of JIRA defect IDs between the start and end commit. The JIRA ID is determined by
         analysing the commit messages
@@ -1058,11 +1167,20 @@ class BitbucketUtils(AtlassianUtils):
         commits = []
         next_page_start = 0
         while True:
-            uri = AtlassianUtils.BITBUCKET_GET_COMMITS_RANGE_URL.format(
-                self.jira_project_key, repo, start_commit, end_commit, next_page_start
+            url = AtlassianUtils.BITBUCKET_GET_COMMITS_RANGE_URL.format(
+                self.project_key, repo, start_commit, end_commit, next_page_start
             )
-            response = self.rest_get(uri)
-            data = json.loads(response.read())
+            if ignore_missing:
+                url = '{0}&ignoreMissing=true'.format(url)
+            if with_counts:
+                url = '{0}&withCounts=true'.format(url)
+            response = self.rest_get(url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError(
+                    'Could not get the commits within the specified range {0}-{1}'.format(start_commit, end_commit)
+                )
+
+            data = json.loads(response.content)
             commits.extend(data['values'])
 
             if data['isLastPage']:
@@ -1070,24 +1188,25 @@ class BitbucketUtils(AtlassianUtils):
 
             next_page_start = data['nextPageStart']
 
+        jira_utils = JiraUtils(self.project_key)
         id_dict = defaultdict(list)
         for c in commits:
             message = c['message']
             # Only merge commits are selected
             if message.startswith('Merge pull request #'):
-                jira_ids = list(set(re.findall('({0}-[0-9]+)'.format(self.jira_project_key), message)))
+                jira_ids = list(set(re.findall('({0}-[0-9]+)'.format(self.project_key), message)))
                 for jira_id in jira_ids:
-                    status = JiraUtils.jira_get_defect_status(jira_id)  # convert from Unicode
+                    status = jira_utils.jira_get_defect_status(jira_id)  # convert from Unicode
                     id_dict[status].append(jira_id)
                     id_dict[status] = list(set(id_dict[status]))
 
         ret_list = list()
-        if match_status is None:
-            for v in id_dict.values():
-                ret_list.extend(v)
-        else:
+        if match_status:
             for status in match_status:
                 ret_list.extend(id_dict[status])
+        else:
+            for v in id_dict.values():
+                ret_list.extend(v)
 
         return ret_list
 
@@ -1100,15 +1219,19 @@ class BitbucketUtils(AtlassianUtils):
         :param status: MERGED, OPEN
         :return: The pull requests dictionary
         """
+
         next_page_start = 0
         pull_requests = []
         while True:
-            uri = AtlassianUtils.BITBUCKET_GET_PULL_REQUESTS.format(
-                self.jira_project_key, repo, branch, direction, status, next_page_start
+            url = AtlassianUtils.BITBUCKET_GET_PULL_REQUESTS_URL.format(
+                self.project_key, repo, branch, direction, status, next_page_start
             )
 
-            response = self.rest_get(uri)
-            data = json.loads(response.read())
+            response = self.rest_get(url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError('Could not get the pull requests for branch {0}'.format(branch))
+
+            data = json.loads(response.content)
             pull_requests.extend(data['values'])
 
             if data['isLastPage']:
@@ -1131,11 +1254,14 @@ class BitbucketUtils(AtlassianUtils):
         next_page_start = 0
         pull_requests = []
         while True:
-            uri = AtlassianUtils.BITBUCKET_GET_ALL_PULL_REQUESTS.format(
-                self.jira_project_key, repo, direction, status, next_page_start
+            url = AtlassianUtils.BITBUCKET_GET_ALL_PULL_REQUESTS_URL.format(
+                self.project_key, repo, direction, status, next_page_start
             )
-            response = self.rest_get(uri)
-            data = json.loads(response.read())
+            response = self.rest_get(url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError('Could not get pull requests for repo {0}'.format(repo))
+
+            data = json.loads(response.content)
             pull_requests.extend(data['values'])
 
             if data['isLastPage']:
@@ -1150,17 +1276,20 @@ class BitbucketUtils(AtlassianUtils):
         """
         Retrieves a pull request detailed activity info
         :param repo: Bitbucket repo
-        :param pr_id: pul request id
+        :param pr_id: pull request id
         :return: The pull requests activity
         """
 
         next_page_start = 0
         activities = []
         while True:
-            uri = AtlassianUtils.GET_PULL_REQUEST_ACTIVITY_URI.format(
-                self.jira_project_key, repo, pr_id, next_page_start)
-            response = self.rest_get(uri)
-            data = json.loads(response.read())
+            url = AtlassianUtils.BITBUCKET_GET_PULL_REQUEST_ACTIVITY_URL.format(
+                self.project_key, repo, pr_id, next_page_start)
+            response = self.rest_get(url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError('Could not get activity info for pull request {0}'.format(pr_id))
+
+            data = json.loads(response.content)
             activities.extend(data['values'])
 
             if data['isLastPage']:
@@ -1169,6 +1298,56 @@ class BitbucketUtils(AtlassianUtils):
             next_page_start = data['nextPageStart']
 
         return activities
+
+    def bitbucket_get_pull_request_info(self, repo, pr_id):
+        """Get info about pull request info
+        :param repo: Bitbucket repo
+        :param pr_id: The pull request id
+        """
+
+        url = AtlassianUtils.BITBUCKET_PULL_REQUEST_INFO_URL.format(self.project_key, repo, pr_id)
+        response = self.rest_get(url)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not get info for pull request {0}'.format(pr_id))
+
+        return json.loads(response.content)
+
+    def bitbucket_get_pull_request_merge_info(self, repo, pr_id):
+        """Get merge information for a pull request
+        :param repo: Bitbucket repo
+        :param pr_id: pull request id
+        """
+
+        url = AtlassianUtils.BITBUCKET_PULL_REQUEST_MERGE_URL.format(self.project_key, repo, pr_id)
+        response = self.rest_get(url)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not get merge info for pull request {0}'.format(pr_id))
+
+        data = json.loads(response.content)
+
+        pr_info_response = namedtuple('response', ['can_be_merged', 'has_conflicts', 'vetoes'])
+
+        return pr_info_response(
+            can_be_merged=data['canMerge'],
+            has_conflicts=data['conflicted'],
+            vetoes=[veto['detailedMessage'] for veto in data['vetoes']]
+        )
+
+    def bitbucket_merge_pull_request(self, repo, pr_id):
+        """Get merge information for a pull request
+        :param repo: Bitbucket repo
+        :param pr_id: pull request id
+        """
+
+        pr_info = self.bitbucket_get_pull_request_info(repo, pr_id)
+
+        url = '{url}?version={version}'.format(
+            url=AtlassianUtils.BITBUCKET_PULL_REQUEST_MERGE_URL.format(self.project_key, repo, pr_id),
+            version=pr_info['version']
+        )
+        response = self.rest_get(url)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not merge pull request {0}'.format(pr_id))
 
     def bitbucket_get_randomized_default_tester(self, repo):
         """
@@ -1234,7 +1413,8 @@ class BitbucketUtils(AtlassianUtils):
         """
         Get statistics of code review done via pull requests whose change set contains source code files
         :param repo: The BITBUCKET repo for which to get the statistics
-        :param branch: The BITBUCKET branch for which to get the statistics. If None, the entire `repo` will be evaluated
+        :param branch: The BITBUCKET branch for which to get the statistics. If None, the entire `repo` will be
+                       evaluated
         :return: A `ReviewStatistics` instance
         """
 
@@ -1256,7 +1436,7 @@ class BitbucketUtils(AtlassianUtils):
             seek_in_list = [pr['fromRef']['id'], pr['title'], pr['description'] if 'description' in pr.keys() else None]
             for seek_in in seek_in_list:
                 if seek_in is not None:
-                    jira_list.extend(list(set(re.findall('({0}-[0-9]+)'.format(self.jira_project_key), seek_in))))
+                    jira_list.extend(list(set(re.findall('({0}-[0-9]+)'.format(self.project_key), seek_in))))
 
         return list(set(jira_list))  # remove duplicates
 
@@ -1268,6 +1448,7 @@ class BitbucketUtils(AtlassianUtils):
         :param pull_request: pull request to analyze
         :return: Pull request is compliant with moderator rules
         """
+
         reviewers = dict()
         for r in pull_request['reviewers']:
             reviewers[r['user']['name']] = r['user']['displayName']
@@ -1368,8 +1549,8 @@ class BitbucketUtils(AtlassianUtils):
             # reviewers must be set each time the pull request changes, otherwise they'll be automatically removed
             payload['reviewers'] = pull_request['reviewers']
             try:
-                uri = AtlassianUtils.BITBUCKET_PULL_REQUEST_URL.format(self.jira_project_key, repo, id_)
-                self.rest_put(uri, payload)
+                url = AtlassianUtils.BITBUCKET_PULL_REQUEST_INFO_URL.format(self.project_key, repo, id_)
+                self.rest_put(url, payload=payload)
             except:  # noqa: E722
                 print('Adding {0} to pull request id {1} failed'.format(description_header, id_))
                 raise
@@ -1378,13 +1559,14 @@ class BitbucketUtils(AtlassianUtils):
 
     def bitbucket_verify_moderators_in_pull_requests(self, repo, branch, direction, status):
         """
-        Verifies if all pull requests associated a Bitbucket branch are compliant with moderator rules
+        Verifies if all pull requests associated with a Bitbucket branch are compliant with moderator rules
         :param repo: repo to seek in
         :param branch: branch to seek in
         :param direction: pull request direction
         :param status: pull request status
         :return: True if full compliance with moderator rules, False otherwise
         """
+
         print('Checking if the pull requests from branch {0}/{1} have a moderator properly set'.format(repo, branch))
         pull_requests = self.bitbucket_get_pull_requests(repo, branch, direction, status)
         if not pull_requests:
@@ -1407,6 +1589,7 @@ class BitbucketUtils(AtlassianUtils):
         :param status: pull request status
         :return: tasks per pull requests map
         """
+
         tasks = dict()
         pull_requests = self.bitbucket_get_pull_requests(repo, branch, direction, status)
         for pr in pull_requests:
@@ -1414,69 +1597,372 @@ class BitbucketUtils(AtlassianUtils):
 
         return tasks
 
+    def bitbucket_delete_repo_branch(self, repo, branch):
+        """Delete a bitbucket repository branch
+        :param repo: repo to delete branch from
+        :param branch: branch to be deleted
+        """
+
+        url = AtlassianUtils.BITBUCKET_GET_BRANCHES_URL.format(self.project_key, repo)
+        payload = {
+            "name": branch,
+            "dryRun": False
+        }
+
+        response = self.rest_delete(url, payload=payload)
+        if response.status_code != HttpStatusCodes.SUCCESS_NO_CONTENT:
+            raise RuntimeError('Could not delete branch {0} from repo {1}'.format(branch, repo))
+
 
 class BambooUtils(AtlassianUtils):
+    """Bamboo utils class."""
 
-    def __init__(self):
-        super(AtlassianUtils, self).__init__()
+    class BambooQueryTypes:
+
+        def __init__(self):
+            pass
+
+        TRIGGER_PLAN_QUERY = 0
+        STOP_PLAN_QUERY = 1
+        RESULTS_QUERY = 2
+        PLAN_QUERY = 3
+        QUEUE_QUERY = 4
+        ARTIFACT_QUERY = 5
+
+        KNOWN_QUERY_TYPES = range(6)
+
+    def __init__(self, project_key):
+        super(BambooUtils, self).__init__(project_key)
+        self.__query_types = BambooUtils.BambooQueryTypes
+        self.__bamboo_server = self.get_bamboo_server()
+
+    @property
+    def query_types(self):
+        """Return the query types"""
+
+        return self.__query_types
+
+    @property
+    def bamboo_server(self):
+        """Return the coverity server"""
+
+        return self.__bamboo_server
+
+    @staticmethod
+    def get_artifacts_from_html_page(page_content):
+        """Parses HTML page in order to obtain the list of artifacts.
+        :param page_content: HTML page content
+        """
+
+        artifacts = list()
+
+        soup = BeautifulSoup(page_content, 'html.parser')
+        # All "<a href></a>" elements
+        a_html_elements = (soup.find_all('a'))
+
+        for a_html_elem in a_html_elements:
+            # File name, as href tag value
+            file_name = a_html_elem.extract().get_text()
+
+            # Do not add HREF value in case PAGE NOT FOUND error
+            if file_name != "Site homepage":
+                artifacts.append(file_name)
+
+            # TODO: add support to download artifacts from sub-dirs as well
+
+        return artifacts
+
+    def get_bamboo_server(self):
+        """Get the bamboo server from 'bamboo_resultsUrl' plan variable
+        e.g: bamboo_resultsUrl=https://bamboo1.sw.nxp.com/browse/AMPAT-XYZ-XYZ1-1 --> bamboo1"""
+
+        results_url = self.get_bamboo_env('resultsUrl')
+        server_name = None
+        try:
+            extract_instance = extract(results_url)
+            sub_domain = extract_instance[0]
+            server_name = sub_domain.split('.')[0]
+        except Exception as exc:  # noqa: E722
+            print("Could not get Bamboo server name: {0}".format(exc))
+
+        return server_name
+
+    def create_url(self, query_type, build_key=None, job=None, artifact=None, url_query_string=None):
+        """Dynamically create a URL based on provided arguments.
+        :param query_type: The type of query used to create the url (a type listed in BambooQueryTypes)
+        :param build_key: The bamboo build key (optional)
+        :param job: The job name as configured in bamboo (optional)
+        :param artifact: The artifact to be used (optional)
+        :param url_query_string: The query string to be used (optional)
+        """
+
+        if query_type not in self.query_types.KNOWN_QUERY_TYPES:
+            raise ValueError("Query type not supported!")
+
+        if query_type == self.query_types.TRIGGER_PLAN_QUERY:
+            return "{url}{build_key}.json".format(
+                url=AtlassianUtils.BAMBOO_TRIGGER_PLAN_URL.format(self.bamboo_server),
+                build_key=build_key
+            )
+
+        elif query_type == self.query_types.PLAN_QUERY:
+            return "{url}{build_key}.json?includeAllStates=true".format(
+                url=AtlassianUtils.BAMBOO_QUERY_PLAN_URL.format(self.bamboo_server),
+                build_key=build_key
+            )
+
+        elif query_type == self.query_types.RESULTS_QUERY:
+            return "{url}{build_key}.json?max-results=10000".format(
+                url=AtlassianUtils.BAMBOO_PLAN_RESULTS_URL.format(self.bamboo_server),
+                build_key=build_key
+            )
+
+        elif query_type == self.query_types.STOP_PLAN_QUERY:
+            return "{url}?planResultKey={build_key}".format(
+                url=AtlassianUtils.BAMBOO_STOP_PLAN_URL.format(self.bamboo_server),
+                build_key=build_key
+            )
+
+        elif query_type == self.query_types.QUEUE_QUERY:
+            return "{url}?expand=queuedBuilds".format(
+                url=AtlassianUtils.BAMBOO_LATEST_QUEUE_URL.format(self.bamboo_server)
+            )
+
+        elif query_type == self.query_types.ARTIFACT_QUERY:
+            url_query_string = url_query_string or ''
+            return (
+                "{url}{url_query_string}".format(
+                    url=AtlassianUtils.BAMBOO_ARTIFACT_URL.format(
+                        self.bamboo_server, build_key, job, artifact
+                    ),
+                    url_query_string=url_query_string)
+            )
+
+    def bamboo_trigger_build(self, build_key=None, req_values=None):
+        """Method to trigger a build using Bamboo API
+
+        :param build_key: Bamboo build key [string]
+        :param req_values: Values to insert into request (tuple)
+
+        :return: A named tuple containing HTTP status_code and request content
+        :raise: Exception, ValueError on Errors
+        """
+
+        if not all((self.bamboo_server, build_key)):
+            return {'content': "Incorrect input provided!"}
+
+        # Execute all stages by default if no options received
+        payload = {'stage&executeAllStages': [True]}
+        # req_values[0] = True/False
+        if req_values:
+            payload['stage&executeAllStages'] = [req_values[0]]
+
+            # Example
+            # req_value[1] = {'bamboo.driver': "xyz", bamboo.test': "xyz_1"}
+            # API supports a list as values
+            for key, value in req_values[1].iteritems():
+                payload[key] = [value]
+
+        url = self.create_url(self.query_types.TRIGGER_PLAN_QUERY, build_key=build_key)
+        print("URL used to trigger build: '{url}'".format(url=url))
+
+        response = self.rest_post(url, payload=payload)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not trigger build for plan {0}'.format(build_key))
+
+        return response
+
+    def bamboo_query_build(self, query_type=None, build_key=None):
+        """Method to query a plan build using Bamboo API.
+
+        :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/query_results>) [string]
+        :param build_key: Bamboo build key [string]
+
+        :return: A named tuple containing HTTP status_code and request content
+        :raise: Exception, ValueError on errors
+        """
+
+        if not all((query_type, build_key)):
+            return {'content': "Incorrect input provided!"}
+
+        url = self.create_url(query_type, build_key=build_key)
+        print("URL used in query: '{url}'".format(url=url))
+
+        response = self.rest_get(url)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not query plan build having build key {0}'.format(build_key))
+
+        return response
+
+    def bamboo_query_build_for_artifacts(self, build_key=None, query_type=None,
+                                         job=None, artifact=None, url_query_string=None):
+        """Method to query Bamboo plan run for stage artifacts
+
+        :param build_key: Bamboo build key [string]
+        :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/download_artifact>) [string]
+        :param job: Bamboo plan job name [string]
+        :param artifact: Name of the artifact as in Bamboo plan stage job [string]
+        :param url_query_string: Query string to compound the URL [string]
+
+        :return: A list containing the artifacts found in the response data
+        :raise: Exception, ValueError on Errors
+        """
+
+        if not all((build_key, query_type, job, artifact)):
+            return {'content': "Incorrect input provided!"}
+
+        url_query_string = url_query_string or ''
+
+        url = self.create_url(query_type, build_key=build_key, job=job, artifact=artifact,
+                              url_query_string=url_query_string)
+        print("URL used to query for artifacts: '{url}'".format(url=url))
+
+        response = self.rest_get(url)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not query plan build having build key {0} for artifacts'.format(build_key))
+
+        return self.get_artifacts_from_html_page(response.content)
+
+    def bamboo_get_artifact(self, build_key=None, query_type=None,
+                            stage=None, artifact=None, url_query_string=None, destination_file=None):
+        """Method to download artifact from Bamboo plan
+
+        :param build_key: Bamboo build key [string]
+        :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/download_artifact>) [string]
+        :param stage: Bamboo plan stage name [string]
+        :param artifact: Name of the artifact as in Bamboo plan stage job [string]
+        :param url_query_string: Query string to compound the URL [string]
+        :param destination_file: Full path to destination file [string]
+
+        :return: A named tuple containing HTTP status_code and request content
+        :raise: Exception, ValueError on Errors
+        """
+
+        if not all((build_key, query_type, stage, artifact, destination_file)):
+            return {'content': "Incorrect input provided!"}
+
+        url = self.create_url(build_key, query_type, stage, artifact, url_query_string or '')
+        print("URL used to download artifact: '{url}'".format(url=url))
+
+        response = self.rest_get(url, query_type, destination_file=destination_file)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not get the requested artifact {0}'.format(artifact))
+
+        return response
+
+    def bamboo_stop_build(self, build_key=None, query_type=None):
+        """Method to stop a running plan from Bamboo using Bamboo API
+
+        :param build_key: Bamboo build key [string]
+        :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/query_results>) [string]
+
+        :return: A named tuple containing HTTP status_code and request content
+        :raise: Exception, ValueError on errors
+        """
+
+        if not build_key:
+            return {'content': "Incorrect input provided!"}
+
+        url = self.create_url(build_key, query_type)
+        print("URL used to stop plan: '{url}'".format(url=url))
+
+        response = self.rest_post(url)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not stop build for plan having build key {0}'.format(build_key))
+
+        return response
+
+    def bamboo_kill_build_after_timeout(self, kill_after_timeout=-1, build_key=None):
+        """Method to watch an Job execution on Bamboo stage.
+        If exceed the specified timeout, the method will stop the current plan
+
+        :param kill_after_timeout: Timeout interval to wait until stopping the plan (seconds) [integer]
+        :param build_key: Bamboo build key [string]
+
+        :return Thread
+                None, no 'build_key/kill_after_timeout' supplied
+        """
+
+        if kill_after_timeout == -1:
+            print("\nAborting the execution of the method as 'kill_after_timeout = -1'!\n")
+            return None
+
+        if not build_key:
+            print("\nNo build key supplied!\n")
+            return None
+
+        kill_timeout = float(kill_after_timeout)
+
+        print(
+            "\nWatching the current Bamboo JOB under plan '{build_key}' "
+            "for a timeout period of: '{timeout}' seconds\n".format(
+                build_key=build_key, timeout=kill_timeout
+            )
+        )
+        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [self.bamboo_server, build_key, "stop_plan"])
+        kill_timer.start()
+
+        return kill_timer
 
     def bamboo_get_plan_branch(self, plan_key, branch_name):
-        """
-        Retrieves the specified branch of the given Bamboo plan
+        """Retrieves the specified branch of the given Bamboo plan
         :param plan_key: plan key in form {projectKey}-{buildKey}
         :param branch_name: name of branch
         :return branch details
         """
+
         # noinspection PyBroadException
-        try:
-            uri = AtlassianUtils.BAMBOO_PLAN_BRANCH_REQUEST_URL.format(plan_key, branch_name)
-            response = self.rest_get(uri)
-            return json.loads(response.read())
-        except:  # noqa: E722
-            print('No branch {0} found in plan {1}'.format(branch_name, plan_key))
-            return None
+        url = AtlassianUtils.BAMBOO_PLAN_BRANCH_REQUEST_URL.format(plan_key, branch_name)
+        response = self.rest_get(url)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not get info for plan branch {0}'.format(branch_name))
+
+        return response
 
     def bamboo_get_branch_key_by_name(self, plan, plan_branch):
-        """
-        Gets the branch unique id if the name is found in the configured plan branches
+        """Gets the branch unique id if the name is found in the configured plan branches
         :param plan: plan unique key
         :param plan_branch: name of the branch
         :return: branch unique key in the plan, if it is configured
         """
 
-        request_url = self.BAMBOO_GET_PLAN_BRANCHES_INFO.format(plan)
+        request_url = AtlassianUtils.BAMBOO_GET_PLAN_BRANCHES_INFO_URL.format(self.bamboo_server, plan)
 
-        response = RESTUtils.get(self.rest_service_configuration, request_url,
-                                 self.account_info.user_account, self.account_info.pwd)
+        response = self.rest_get(request_url)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not get branch key for plan branch {0}'.format(plan_branch))
 
         # check whether branch is configured in the plan
         branch_key = None
-        for branch_info in json.loads(response.read())['branches']['branch']:
+        for branch_info in json.loads(response.content)['branches']['branch']:
             if plan_branch == branch_info["shortName"]:
                 branch_key = branch_info["key"]
                 break
 
         if not branch_key:
-            raise Exception("Branch {0} is not configured in the plan: {1}, please create the plan branch".
-                            format(plan_branch, plan))
+            raise RuntimeError(
+                "Branch {0} is not configured in the plan: {1}, please create the plan branch".format(plan_branch, plan)
+            )
 
         return branch_key
 
     def bamboo_wait_for_build(self, build_url, timeout=0):
-        """
-        Waits for a specific build to be finished using get requests and interrogating build status.
+        """Waits for a specific build to be finished using get requests and interrogating build status.
         :param build_url: Triggered build url
         :param timeout: Maximum build time for triggered build until the build is considered to be failed, in seconds,
         if 0, the build will be left to run indefinitely
         """
+
         start = time.time()
         while True:
             if timeout and time.time() - start > timeout:
                 raise Exception("Triggered build took longer than the configured time {0}".format(timeout))
 
-            response = RESTUtils.get(self.rest_service_configuration, build_url,
-                                     self.account_info.user_account, self.account_info.pwd)
-            build_status = json.loads(response.read())["buildState"]
+            response = self.rest_get(build_url)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
+                raise RuntimeError('Could not query build at {0}'.format(build_url))
+
+            build_status = json.loads(response.content)["buildState"]
             if build_status != "Unknown":
                 break
             else:
@@ -1484,21 +1970,25 @@ class BambooUtils(AtlassianUtils):
             time.sleep(60)
 
         if build_status == "Failed":
-            raise Exception("Triggered build failed. Please check {0} for logs".format(build_url))
+            raise RuntimeError("Triggered build failed. Please check {0} for logs".format(build_url))
         else:
             print("Triggered build was successful")
 
     def bamboo_build_plan_branch(self, plan_settings, wait_completion=True, timeout=0):
-        """
-        Triggers a build in the configured plan.
+        """Triggers a build in the configured plan.
         :param plan_settings: configuration instance of the remote plan containing information about plan name, branch
         name and build arguments
         :param wait_completion: boolean determining whether the build result will be waited
         :param timeout: Maximum build time for triggered build until the build is considered to be failed, in seconds,
         if 0, the build will be left to run indefinitely
         """
-        request_url = self.BAMBOO_QUEUE_POST_REQUEST_URL.format(
-            self.bamboo_get_branch_key_by_name(plan_settings.plan, plan_settings.plan_branch) + ".json?")
+
+        request_url = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(
+            self.bamboo_server,
+            self.bamboo_get_branch_key_by_name(
+                plan_settings.plan, plan_settings.plan_branch
+            ) + ".json?"
+        )
         if plan_settings.build_args:
             request_url += plan_settings.build_args
 
@@ -1510,25 +2000,28 @@ class BambooUtils(AtlassianUtils):
             else:
                 request_data[key] = plan_settings.bamboo_build_args[key]
 
-        response = RESTUtils.post(self.rest_service_configuration,
-                                  request_url,
-                                  self.account_info.user_account,
-                                  self.account_info.pwd,
-                                  request_data)
+        response = self.rest_post(request_url, payload=request_data)
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+            raise RuntimeError('Could not trigger build at {0}'.format(request_url))
+
         Utils.print_with_header("Build Triggered: {0}".format(request_url))
 
         if wait_completion:
-            self.bamboo_wait_for_build(json.loads(response.read())["link"]["href"] + ".json", timeout)
+            self.bamboo_wait_for_build(json.loads(response.content)["link"]["href"] + ".json", timeout)
 
     def bamboo_trigger_build_plan(self, build_plan_key):
-        """
-        Post the specified build to the Bamboo build queue
+        """Post the specified build to the Bamboo build queue
         :param build_plan_key: Build plan key
         """
-        print('Posting build plan to Bamboo queue: https://bamboo1.sw.nxp.com/browse/{0}'.format(build_plan_key))
 
-        uri = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(build_plan_key)
-        self.rest_post(uri, {})
+        print(
+            'Posting build plan to Bamboo queue: https://{0}.sw.nxp.com/browse/{1}'.format(
+                self.bamboo_server, build_plan_key
+            )
+        )
+
+        url = AtlassianUtils.BAMBOO_QUEUE_POST_REQUEST_URL.format(self.bamboo_server, build_plan_key)
+        self.rest_post(url, payload={})
 
 
 class AutomationConfiguration(object):
@@ -1547,6 +2040,7 @@ class AutomationConfiguration(object):
         :param plan_type: The plan type of the automation system
         :return: An AutomationConfiguration instance
         """
+
         if not AutomationConfiguration.static_instance:
             AutomationConfiguration.static_instance = AutomationConfiguration(plan_type)
 
@@ -1554,14 +2048,16 @@ class AutomationConfiguration(object):
 
     @staticmethod
     def initialize_groups(plan_type):
+        """Return the tuple formed by repo name, slug and repo suffix
+           e.g. for the ssh://git@bitbucket.sw.nxp.com/artd/base.git repository ('/artd/', 'base', '.git') would be
+           the resulted tuple"""
 
         url = AtlassianUtils.get_env_var('planRepository_repositoryUrl', plan_type)
 
+        # Check if the regex can be improved
         groups = re.search('(\/[^\.]*\/)([^\/]*)(\.git)', url).groups()
         if groups is None:
             raise Exception('Repository URL Bamboo variable does not have the expected format: {0}'.format(url))
-
-        groups = sorted(set(groups), key=groups.index)  # group order matters, therefore don't alter it
 
         if len(groups) != 3:  # check that we're indeed dealing with an appropriate Bamboo variable
             raise Exception('Repo and project cannot be decoded from Bamboo variable {0}'.format(url))
@@ -1660,99 +2156,121 @@ class AutomationConfiguration(object):
     @property
     def plan_type(self):
         """Get the plan type."""
+
         return self._plan_type
 
     @property
     def repo(self):
         """Get the repository."""
+
         return self._repo
 
     @property
     def project(self):
         """Get the project."""
+
         return self._project
 
     @property
     def agent_id(self):
         """Get the agent ID."""
+
         return self._agent_id
 
     @property
     def job(self):
         """Get the job name."""
+
         return self._job
 
     @property
     def product_name(self):
         """Get the product name."""
+
         return self._product_name
 
     @property
     def job_short_key(self):
         """Get the job key."""
+
         return self._job_short_key
 
     @property
     def working_dir(self):
         """Get the Bamboo plan working directory passed as Bamboo variable."""
+
         return self._working_dir
 
     @property
     def plan_name(self):
         """Get the plan name."""
+
         return self._plan_name
 
     @property
     def short_plan_name(self):
         """Get the short plan name."""
+
         return self._short_plan_name
 
     @property
     def plan_branch_name(self):
         """Get the branch name."""
+
         return self._plan_branch_name
 
     @property
     def plan_key(self):
         """Get the plan key."""
+
         return self._plan_key
 
     @property
     def stage_key(self):
         """Get the stage key."""
+
         return self._stage_key
 
     @property
     def plan_build_number(self):
         """Get the plan build number."""
+
         return self._plan_build_number
 
     @property
     def build_key(self):
         """Get the build key."""
+
         return self._build_key
 
     @property
     def suppress_errors(self):
         """Suppress errors."""
+
         return self._suppress_errors
 
     @property
     def debug_location(self):
         """Get the standardized debugging path for all releases."""
+
         return self._debug_location
 
     @property
     def debug_mode(self):
         """Debug mode."""
+
         return self._debug_mode
 
     @property
     def keep_shared_artifacts_in_case_of_error_for_jobs(self):
+        """Get the the list of shared artifacts kept in case of error"""
+
         return self._keep_shared_artifacts_in_case_of_error_for_jobs
 
     @property
     def keep_plan_shared_artifacts(self):
+        """The boolean value configured for keeping the plan shared artifacts"""
+
         return self._keep_plan_shared_artifacts
 
     @staticmethod
@@ -1760,15 +2278,14 @@ class AutomationConfiguration(object):
         """
         Abstract method that must be implemented in the classes that derives this class
         """
+
         raise NotImplementedError('Cannot call method {0} of abstract class {1} instance'
                                   .format(inspect.currentframe().f_code.co_name, 'AutomationConfiguration'))
 
     @staticmethod
     def get_content_from_config_file(config_file=None):
         """Read the config config file
-
         :param config_file: Configuration file [string]
-
         :return: file content [dict]
                  None, no config file supplied
         :raise ValueError
@@ -1800,8 +2317,13 @@ class BambooSettings(AutomationConfiguration):
     """
     Bamboo build settings
     """
+
     @staticmethod
     def get_branches():
+        """Return the list of branches configured for current plan
+        :return The list of branches
+        """
+
         branches = []
         index = 1
         while True:
@@ -1845,14 +2367,20 @@ class BambooSettings(AutomationConfiguration):
 
     @property
     def branches(self):
+        """Get the current branches"""
+
         return self._branches
 
     @property
     def branch(self):
+        """Get the main (first) configured branch"""
+
         return self._branch
 
     @property
     def results_url(self):
+        """Get the results url"""
+
         return self.__results_url
 
     @property
@@ -1899,6 +2427,7 @@ class JIRASchema(object):
         :param name: JIRA defect field name a it appears in web UI
         :return:The JIRA defect field ID as defined by the schema
         """
+
         if name in self.fields.keys():
             return self.fields[name]
         else:
@@ -1910,6 +2439,7 @@ class JIRASchema(object):
         :param field_id: JIRA defect field ID as defined by the schema
         :return:The JIRA defect field name as it appears in web UI
         """
+
         for key in self.fields.keys():
             if self.fields[key] == field_id:
                 return key
@@ -1925,14 +2455,16 @@ class PullRequestTriggerJob(AutomationJob):
     class PRTriggerState(object):
         """
         Helper class to maintain the state related to triggering builds for pull-requests
-        State is persisted in a shared location database
+        State is recorded in a shared location database
         """
+
         DB_PATH = os.path.join(Utils.get_shared_resources_location(), 'Builds', 'S32SDK', 'pull_request_monitoring',
                                'trigger_state.db')
 
         def __init__(self):
             """State is maintained in the database as TABLE (PullRequestId, CommitId)
             signifying the most recent commit for which a build has been triggered for the specified pull request"""
+
             self.con = sqlite3.connect(self.DB_PATH)
 
         def get_known_pull_requests(self):
@@ -1940,6 +2472,7 @@ class PullRequestTriggerJob(AutomationJob):
             Retrieve all known pull requests
             :return: List of pull request ids
             """
+
             with self.con:
                 cur = self.con.cursor()
                 cur.execute('SELECT * FROM Triggers')
@@ -1951,6 +2484,7 @@ class PullRequestTriggerJob(AutomationJob):
             :param pr_id: pull request id
             :return: last commit
             """
+
             with self.con:
                 cur = self.con.cursor()
                 cur.execute('SELECT CommitId FROM Triggers WHERE PullRequestId=?', (pr_id,))
@@ -1962,6 +2496,7 @@ class PullRequestTriggerJob(AutomationJob):
             Stop tracking the specified pull request
             :param pr_id: pull request id
             """
+
             with self.con:
                 cur = self.con.cursor()
                 cur.execute('DELETE FROM Triggers WHERE PullRequestId=?', (pr_id,))
@@ -1972,13 +2507,16 @@ class PullRequestTriggerJob(AutomationJob):
             :param pr_id: pull request id
             :param commit: commit id
             """
+
             with self.con:
                 cur = self.con.cursor()
                 cur.execute('REPLACE INTO Triggers VALUES(?, ?)', (pr_id, commit))
 
     def __init__(self):
+
         self.automation_configuration = AutomationConfiguration.get_static_instance()
-        self.utils = AtlassianUtils(self.automation_configuration.project)
+        self.bitbucket_utils = BitbucketUtils(self.automation_configuration.project)
+        self.bamboo_utils = BambooUtils(self.automation_configuration.project)
         self.state = PullRequestTriggerJob.PRTriggerState()
         self.target_build_plans = self.get_target_build_plans()
 
@@ -1987,6 +2525,7 @@ class PullRequestTriggerJob(AutomationJob):
         Retrieve the key of the plan that needs to be built based on the pull request's source and destination branches
         This method needs to be overridden in derived classes.
         """
+
         raise NotImplementedError('Cannot call method {0} of abstract class {1} instance'
                                   .format(inspect.currentframe().f_code.co_name, self.__class__.__name__))
 
@@ -1996,6 +2535,7 @@ class PullRequestTriggerJob(AutomationJob):
         associated build plans. File is kept external in a source control.
         This method needs to be overridden in derived classes.
         """
+
         raise NotImplementedError('Cannot call method {0} of abstract class {1} instance'
                                   .format(inspect.currentframe().f_code.co_name, self.__class__.__name__))
 
@@ -2012,7 +2552,8 @@ class PullRequestTriggerJob(AutomationJob):
             # Subclasses provide the bamboo plan key
             plan_key = self.get_build_plan_key(source_branch, target_branch)
             # Trigger build
-            self.utils.trigger_build_plan(plan_key)
+            # TODO
+            self.bamboo_utils.bamboo_trigger_build_plan(plan_key)
         except Exception:
             return False
         else:
@@ -2022,7 +2563,7 @@ class PullRequestTriggerJob(AutomationJob):
         """Check all existing pull requests and trigger build plans as necessary."""
 
         # Retrieve all current open pull requests
-        current_pull_requests = self.utils.bitbucket_get_all_pull_requests(
+        current_pull_requests = self.bitbucket_utils.bitbucket_get_all_pull_requests(
             self.automation_configuration.repo, 'OUTGOING', 'OPEN')
 
         print('The following branch mapping has been read: {0}'.format(self.target_build_plans))
@@ -2065,331 +2606,9 @@ class BambooPlanSettings(object):
         :param bamboo_build_args: Dictionary containing the bamboo build variables
         :param bamboo_url: string containing URL to the bamboo server (i.e. 'https://bamboo1.sw.nxp.com/')
         """
+
         self.plan = plan
         self.plan_branch = plan_branch
         self.build_args = build_args
         self.bamboo_build_args = bamboo_build_args
         self.bamboo_url = bamboo_url
-
-
-class RemoteAPI:
-    """
-    Class contain implementation of common functionality for interact with REST API
-    Attributes:
-    auth - authorization data required to have access to the repository
-    request_timeout - timeout before rejecting request
-    request_retry_delay - delay before next request repetition if was an error
-    result_type - type of return value
-    """
-
-    def __init__(self, auth, request_timeout=REQUEST_TIMEOUT_SEC, request_retry_delay=REQUEST_RETRY_DELAY_SEC):
-
-        self.auth = auth
-        self.request_timeout = request_timeout
-        self.request_retry_delay = request_retry_delay
-        # Type for return value
-        self.result_type = namedtuple('result_type', ['success', 'info'])
-
-    def make_request(self, request_url, headers=HEADERS, method=requests.get, data=None, retries=int()):
-        """Make request
-        :param request_url - url where request should be done,
-        :param headers - headers for requests,
-        :param method - method which should be used in order to do request,
-        :param data - data to be sent in request
-        :param retries - how many retries with delay should be done for sending request
-        :return type - namedtuple(status_code, response_text)
-        :return status_code - status code, response_text text of response"""
-
-        try:
-            response = method(request_url, auth=self.auth, timeout=self.request_timeout, headers=headers, data=data)
-        except requests.exceptions.RequestException:
-            logging.error('Request exception occurred: {0}'.format(request_url))
-            if retries:
-                logging.info('Request: {0} will be repeated after {1} seconds'.format(request_url,
-                                                                                      self.request_retry_delay))
-                sleep(self.request_retry_delay)
-                return self.make_request(request_url, headers, method=method, data=data, retries=retries-1)
-            return None, None
-
-        logging.debug("request:{0}".format(request_url))
-        logging.debug("status:{0}, response:{1}".format(response.status_code, response.text.encode('UTF-8', 'ignore')))
-        request_result = namedtuple('request_result', ['status_code', 'response_text'])
-        return request_result(response.status_code, response.text)
-
-
-class BambooAPI(RemoteAPI, object):
-    """
-    Class is used to interact with Bamboo plans via REST API
-    Attributes:
-    bamboo_url - url to local Bamboo
-    auth - authorization data required to have access to the repository
-    request_timeout - timeout before rejecting request
-    api_version - version of rest API
-    """
-
-    BAMBOO_TRIGGER_PLAN = "{bamboo_url}/rest/api/{api_version}/queue/{plan_key}{response_format}" \
-                          "?executeAllStages=true{bamboo_vars}"
-    BAMBOO_CHECK_PLAN_STATE = "{bamboo_url}/rest/api/{api_version}/result/{plan_key}-{build_number}{response_format}"
-
-    def __init__(self, bamboo_url, auth, request_timeout=REQUEST_TIMEOUT_SEC):
-
-        super(BambooAPI, self).__init__(auth, request_timeout)
-        self.bamboo_url = bamboo_url
-
-    def bamboo_trigger_plan(self, plan_key, custom_variables, api_version="latest"):
-        """Triggering bamboo plan using REST Api.
-        :param plan_key - plan key for Bamboo plan
-        :param custom_variables - dictionary with custom variables for triggering the build
-        :param api_version - REST Api version
-        :return type - namedtuple(success, info)
-        :return True - if no errors, data - history between commits
-        :return False - if errors, error message
-        :return False - if errors, None - if no error message received"""
-
-        bamboo_vars = ''
-        for name, value in custom_variables.items():
-            bamboo_vars += '&{bamboo_var_name}={bamboo_value}'.format(
-                bamboo_var_name=name,
-                bamboo_value=value)
-
-        request_url = BambooAPI.BAMBOO_TRIGGER_PLAN.format(bamboo_url=self.bamboo_url,
-                                                           api_version=api_version,
-                                                           plan_key=plan_key,
-                                                           response_format='.json',
-                                                           bamboo_vars=bamboo_vars)
-
-        status, text = self.make_request(request_url, method=requests.post)
-        if status == SUCCESS_OK:
-            return self.result_type(True, json.loads(text))
-        elif status in [FAIL_BAD_REQUEST, FAIL_UNAUTHORIZED, FAIL_NOT_FOUND, FAIL_UNSUPPORTED]:
-            return self.result_type(False, json.loads(text).get('message'))
-        else:
-            return self.result_type(False, None)
-
-    def bamboo_check_plan_state(self, plan_key, build_number, api_version="latest"):
-        """Check status of Bamboo plan key using REST Api.
-        :param plan_key - plan key for Bamboo plan
-        :param build_number - build number of Bamboo plan
-        :param api_version - REST Api version
-        :return type - namedtuple(success, info)
-        :return success - True if no errors, info about current status of bamboo plan
-        :return success - False if errors, None"""
-
-        request_url = BambooAPI.BAMBOO_CHECK_PLAN_STATE.format(bamboo_url=self.bamboo_url,
-                                                               api_version=api_version,
-                                                               plan_key=plan_key,
-                                                               build_number=build_number,
-                                                               response_format='.json')
-
-        status, text = self.make_request(request_url)
-        return self.result_type(True, json.loads(text)) if status == SUCCESS_OK else self.result_type(False, None)
-
-
-class BitbucketAPI(RemoteAPI, object):
-    """Class is used to interact with Bitbucket repository via REST Api
-    Attributes:
-    pr_id - ID of pull request to identify changes that we want to get from repository
-    auth - authorization data required to have access to the repository
-    bitbucket_url - url to local Bitbucket repository
-    project_key - ID for required project in BitBucket
-    repository_slug - ID for required repository in project
-    api_version - version of rest API
-    request_timeout - timeout before rejecting request
-    """
-
-    # URL constants which will be used for methods
-    BITBUCKET_GET_PULL_REQUEST_INFO = "{base_url}/pull-requests/{pr_id}"
-    BITBUCKET_GET_PULL_REQUEST_CHANGES = "{base_url}/pull-requests/{pr_id}/changes"
-    BITBUCKET_GET_HISTORY_BETWEEN_COMMITS = "{base_url}/commits?ignoreMissing=false&merges=include" \
-                                            "&since={since_refid}&until={until_refid}&withCounts=true"
-    BITBUCKET_GET_FILE_AT_REVISION = "{base_url}/browse/{path}?at={revid}&raw"
-    BITBUCKET_GET_PULL_REQUEST_STATUS = "{base_url}/pull-requests/{pr_id}/merge"
-    BITBUCKET_GET_REPO_TAGS = "{base_url}/tags?filtertext&orderby&limit={limit}"
-    BITBUCKET_GET_REPO_BRANCHES = "{base_url}/branches"
-    BITBUCKET_ADD_COMMENT = "{base_url}/pull-requests/{pr_id}/comments?diffType=EFFECTIVE&markup=true\""
-    BITBUCKET_MERGE_PULL_REQUEST = "{base_url}/pull-requests/{pr_id}/merge?version={ver}"
-    BITBUCKET_DELETE_SOURCE_BRANCH = "/rest/branch-utils/{api_version}/projects/{project_key}/repos/" \
-                                     "{repository_slug}/branches"
-
-    def __init__(self, pr_id, auth, bitbucket_url, project_key, repository_slug, api_version="latest",
-                 request_timeout=REQUEST_TIMEOUT_SEC):
-
-        super(BitbucketAPI, self).__init__(auth, request_timeout)
-        self.pr_id = pr_id
-        self.bitbucket_url = bitbucket_url
-        self.project_key = project_key
-        self.repository_slug = repository_slug
-        self.api_version = api_version
-        # Mostly used base url for API
-        self.base_url = "{bitbucket_url}/rest/api/{api_version}/projects/{project_key}/repos/{repository_slug}".format(
-            bitbucket_url=self.bitbucket_url,
-            api_version=api_version,
-            project_key=self.project_key,
-            repository_slug=self.repository_slug
-        )
-
-    def bitbucket_get_pull_request_info(self):
-        """Get info about pull request
-        https://docs.atlassian.com/bitbucket-server/rest/6.8.0/bitbucket-rest.html#idp272
-        :return type - namedtuple(success, info)
-        :return success - True if no errors, text - data about PR"""
-
-        request_url = BitbucketAPI.BITBUCKET_GET_PULL_REQUEST_INFO.format(base_url=self.base_url, pr_id=self.pr_id)
-        status, text = self.make_request(request_url)
-        return self.result_type(True, json.loads(text)) if status == SUCCESS_OK else self.result_type(False, None)
-
-    def bitbucket_get_pull_request_changes(self):
-        """Get info about changes(changed files for example) from Pull Request
-        https://docs.atlassian.com/bitbucket-server/rest/6.8.0/bitbucket-rest.html#idp296
-        :return type - namedtuple(success, info)
-        :return True - if no errors, dict - data about changes in PR
-        :return False - if errors, error message
-        :return False - if errors, None - if no error message recieved"""
-
-        request_url = BitbucketAPI.BITBUCKET_GET_PULL_REQUEST_CHANGES.format(base_url=self.base_url, pr_id=self.pr_id)
-        status, text = self.make_request(request_url)
-        if status == SUCCESS_OK:
-            return self.result_type(True, json.loads(text))
-        elif status in [FAIL_UNAUTHORIZED, FAIL_NOT_FOUND]:
-            return self.result_type(False, json.loads(text).get('errors')[0].get('message'))
-        else:
-            return self.result_type(False, None)
-
-    def bitbucket_get_history_between_commits(self, since_refid, until_refid):
-        """Get info about history between commits
-        https://docs.atlassian.com/bitbucket-server/rest/6.8.0/bitbucket-rest.html#idp206
-        :param since_refid - id of commit - start of history
-        :param until_refid - id of commit - end of history
-        :return type - namedtuple(success, info)
-        :return True - if no errors, data - history between commits
-        :return False - if errors, error message
-        :return False - if errors, None - if no error message recieved"""
-
-        request_url = BitbucketAPI.BITBUCKET_GET_HISTORY_BETWEEN_COMMITS.format(base_url=self.base_url,
-                                                                                since_refid=since_refid,
-                                                                                until_refid=until_refid)
-
-        status, text = self.make_request(request_url)
-
-        if status == SUCCESS_OK:
-            return self.result_type(True, json.loads(text))
-        elif status in [FAIL_BAD_REQUEST, FAIL_UNAUTHORIZED, FAIL_NOT_FOUND]:
-            return self.result_type(False, json.loads(text).get('errors')[0].get('message'))
-        else:
-            return self.result_type(False, None)
-
-    def bitbucket_get_file_at_revision(self, rev_id, path):
-        """Get content of file from remote repository
-        https://docs.atlassian.com/bitbucket-server/rest/6.8.0/bitbucket-rest.html#idp200
-        :param rev_id - branch of commit
-        :param path - path of required file
-        :return type - namedtuple(success, info)
-        :return success - True if no errors, content of file
-        :return success - False if errors, None"""
-
-        request_url = BitbucketAPI.BITBUCKET_GET_FILE_AT_REVISION.format(base_url=self.base_url,
-                                                                         path=path,
-                                                                         revid=rev_id)
-        status, text = self.make_request(request_url)
-        if status == SUCCESS_OK:
-            content = ""
-            for line in json.loads(text).get("lines"):
-                content += line["text"] + "\n"
-            return self.result_type(True, content.encode('ascii', 'ignore'))
-        return self.result_type(False, None)
-
-    def bitbucket_get_pull_request_status(self):
-        """Get status of pull request
-        https://docs.atlassian.com/bitbucket-server/rest/6.8.0/bitbucket-rest.html#idp287
-        :return type - namedtuple(success, info)
-        :return success - True if no errors, dict - request status
-        :return success - False if errors, error message
-        :return success - False if errors, None if no error message received"""
-
-        request_url = BitbucketAPI.BITBUCKET_GET_PULL_REQUEST_STATUS.format(base_url=self.base_url, pr_id=self.pr_id)
-        status, text = self.make_request(request_url)
-        if status == SUCCESS_OK:
-            return self.result_type(True, json.loads(text))
-        elif status in [FAIL_UNAUTHORIZED, FAIL_NOT_FOUND, FAIL_CONFLICT]:
-            return self.result_type(False, json.loads(text).get('errors')[0].get('message'))
-        else:
-            return self.result_type(False, None)
-
-    def bitbucket_get_repo_tags(self, limit=100):
-        """Get list of tags inside repo
-        https://docs.atlassian.com/bitbucket-server/rest/6.8.0/bitbucket-rest.html#idp347
-        :return type - namedtuple(success, info)
-        :return success - True if no errors, info about remote tags
-        :return success - False if errors, None"""
-
-        request_url = BitbucketAPI.BITBUCKET_GET_REPO_TAGS.format(base_url=self.base_url, limit=limit)
-        status, text = self.make_request(request_url)
-        return self.result_type(True, json.loads(text)) if status == SUCCESS_OK else self.result_type(False, None)
-
-    def bitbucket_get_repo_branches(self):
-        """Get list of branches inside repo
-        :return type - namedtuple(success, info)
-        :return success - True if no errors, info about remote branches
-        :return success - False if errors, None"""
-
-        request_url = BitbucketAPI.BITBUCKET_GET_REPO_BRANCHES.format(base_url=self.base_url)
-        status, text = self.make_request(request_url)
-        return self.result_type(True, json.loads(text)) if status == SUCCESS_OK else self.result_type(False, None)
-
-    def bitbucket_add_comment(self, comment):
-        """Add comment to a Pull Request
-        https://docs.atlassian.com/bitbucket-server/rest/6.8.0/bitbucket-rest.html#idp211
-        :param comment - text for Pull Request comment
-        :return True - if no errors"""
-
-        request_url = BitbucketAPI.BITBUCKET_ADD_COMMENT.format(base_url=self.base_url, pr_id=self.pr_id)
-        status, text = self.make_request(request_url, method=requests.post, data=json.dumps({"text": comment}))
-        return True if status == SUCCESS_CREATED else False
-
-    def bitbucket_merge_pull_request(self):
-        """Merge Pull Request
-        https://docs.atlassian.com/bitbucket-server/rest/6.8.0/bitbucket-rest.html#idp289
-        :return type - namedtuple(success, info)
-        :return success - True if no errors, dict - request status
-        :return success - False if errors, error message
-        :return success - False if errors, None if no error message received"""
-
-        # Get pr version
-        success, pr_info = self.bitbucket_get_pull_request_info()
-        if not success:
-            return False, "Couldn't get Pull Request version"
-
-        request_url = BitbucketAPI.BITBUCKET_MERGE_PULL_REQUEST.format(base_url=self.base_url,
-                                                                       pr_id=self.pr_id,
-                                                                       ver=pr_info.get('version'))
-
-        status, text = self.make_request(request_url, method=requests.post)
-        if status == SUCCESS_OK:
-            return self.result_type(True, json.loads(text))
-        elif status in [FAIL_UNAUTHORIZED, FAIL_NOT_FOUND, FAIL_CONFLICT]:
-            return self.result_type(False, json.loads(text).get('errors')[0].get('message'))
-        else:
-            return self.result_type(False, None)
-
-    def bitbucket_delete_source_branch(self, branch):
-        """Delete source branch
-        https://docs.atlassian.com/bitbucket-server/rest/6.8.0/bitbucket-branch-rest.html#idp3
-        :param branch - branch name
-        :return type - namedtuple(success, info)
-        :return success - True if no errors, None
-        :return success - False if errors, error message
-        :return success - False if errors, None if no error message received"""
-
-        api = BitbucketAPI.BITBUCKET_DELETE_SOURCE_BRANCH.format(api_version=self.api_version,
-                                                                 project_key=self.project_key,
-                                                                 repository_slug=self.repository_slug)
-
-        request_url = "{bitbucket_url}{api}".format(bitbucket_url=self.bitbucket_url, api=api)
-        data = {'name': branch, 'dryRun': False}
-        status, text = self.make_request(request_url, method=requests.delete, data=json.dumps(data))
-        if status == SUCCESS_NO_CONTENT:
-            return self.result_type(True, None)
-        elif status in [FAIL_BAD_REQUEST, FAIL_UNAUTHORIZED]:
-            return self.result_type(False, json.loads(text).get('errors')[0].get('message'))
-        else:
-            return self.result_type(False, None)

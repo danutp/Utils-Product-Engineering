@@ -10,9 +10,7 @@ from __future__ import division  # enables floating point division
 import inspect
 import sys
 
-from helper.system_configuration import SystemConfiguration
-
-__copyright__ = "Copyright 2018 NXP"
+__copyright__ = "Copyright 2018-2021 NXP"
 
 
 class AutomationJob(object):
