@@ -3,7 +3,7 @@
     Authors:
         Ioan-Dan Puslenghea <danioan.puslenghea@nxp.com>
 
-    NXP (c) All rights reserved, 2021
+    NXP (c)  2021
 """
 import os
 import re
