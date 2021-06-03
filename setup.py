@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
     Authors:
-        Eduardo Lezcano Alvarez (nxf48707) <eduardo.lezcanoalvarez@nxp.com>
+        Ioan-Dan Puslenghea <danioan.puslenghea@nxp.com>
 
-    NXP (c) All rights reserved, 2020
+    NXP (c) All rights reserved, 2021
 """
 import os
 import re
