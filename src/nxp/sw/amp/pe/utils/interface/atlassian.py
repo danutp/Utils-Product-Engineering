@@ -19,9 +19,9 @@ import threading
 from bs4 import BeautifulSoup
 from collections import defaultdict, namedtuple
 from distutils import util
-from helper.pull_request import ReviewStatistics
-from helper.rest import HttpStatusCodes, RESTUtils
-from helper.utils import Utils
+from nxp.utilsNG.helper.pull_request import ReviewStatistics
+from nxp.utilsNG.helper.rest import HttpStatusCodes, RESTUtils
+from nxp.utilsNG.helper.utils import Utils
 from multiprocessing.pool import ThreadPool
 from multiprocessing import cpu_count
 from random import randrange
@@ -58,11 +58,26 @@ class AtlassianAccount(object):
     def password(self):
         return self.__password
 
-    @staticmethod
-    def __load_credentials():
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               'atlassian',
-                               'auth_credentials.json')) as fd:
+    def __load_credentials(self):
+        # TODO Retrieve the credentials from client instead of seeking the json file within the module
+
+        # Get the path of the runner
+        # [-1] -> The first call on stack (entry_point.py)
+        # [1] -> The file name (full path of the entry_point.py runner)
+        runner_path = inspect.stack()[-1][1]
+
+        # Get the current module name and strip the package root identifier (nxp) and the specific package (utilsNG)
+        module = os.path.join(*self.__module__.split('.')[2:])
+
+        credentials_file = open(os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.join(runner_path, module))), 'helper', 'bamboo', 'auth_credentials.json'
+        ))
+
+        print("Using {0} as credentials file".format(credentials_file))
+
+        # Change to <PATH>/interface/../helper/atlassian and read the configuration file
+        with credentials_file as fd:
             credentials = json.loads(fd.read())
 
         return credentials['username'], base64.b64decode(credentials['password'])
@@ -2055,7 +2070,7 @@ class AutomationConfiguration(object):
         url = AtlassianUtils.get_env_var('planRepository_repositoryUrl', plan_type)
 
         # Check if the regex can be improved
-        groups = re.search('(\/[^\.]*\/)([^\/]*)(\.git)', url).groups()
+        groups = re.search('(/[^.]*/)([^/]*)(\.git)', url).groups()
         if groups is None:
             raise Exception('Repository URL Bamboo variable does not have the expected format: {0}'.format(url))
 

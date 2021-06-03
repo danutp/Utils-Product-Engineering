@@ -2,7 +2,7 @@
 
 import os
 
-from helper.utils import Utils
+from nxp.utilsNG.helper.utils import Utils
 from multiprocessing import cpu_count
 
 

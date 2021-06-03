@@ -5,8 +5,7 @@ import urlparse
 
 from collections import namedtuple
 from functools import wraps
-from interface.atlassian import AtlassianAccount
-from helper.utils import Utils
+from nxp.utilsNG.helper.utils import Utils
 
 
 __copyright__ = "Copyright 2019-2021 NXP"

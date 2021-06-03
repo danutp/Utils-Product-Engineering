@@ -31,9 +31,9 @@ import zipfile
 from ast import literal_eval
 from datetime import datetime
 from distutils import util
-from generic.exceptions import AcquireResourceTimeoutError, ThreadingLockError
-from helper.concurrency import FileLock, ThreadingLock
-from helper.shared_drive_mounting_utils import SharedDriveMountingUtils
+from nxp.utilsNG.generic.exceptions import AcquireResourceTimeoutError, ThreadingLockError
+from nxp.utilsNG.helper.concurrency import FileLock, ThreadingLock
+from nxp.utilsNG.helper.shared_drive_mounting_utils import SharedDriveMountingUtils
 from json import dumps
 from multiprocessing.dummy import Pool as ThreadPool
 from time import time, sleep
