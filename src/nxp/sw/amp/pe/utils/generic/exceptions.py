@@ -1,6 +1,6 @@
 """Module containing automation framework specific exceptions"""
 
-__copyright__ = "Copyright 2020 NXP"
+__copyright__ = "Copyright 2021 NXP"
 
 import os
 

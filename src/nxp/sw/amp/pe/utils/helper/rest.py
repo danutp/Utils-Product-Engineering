@@ -5,10 +5,10 @@ import urlparse
 
 from collections import namedtuple
 from functools import wraps
-from nxp.utilsNG.helper.utils import Utils
+from nxp.sw.amp.pe.utils.helper.utils import Utils
 
 
-__copyright__ = "Copyright 2019-2021 NXP"
+__copyright__ = "Copyright 2021 NXP"
 
 
 class HttpStatusCodes:

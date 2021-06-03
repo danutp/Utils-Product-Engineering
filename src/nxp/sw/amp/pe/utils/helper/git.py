@@ -1,6 +1,6 @@
 import os
 
-from nxp.utilsNG.helper.utils import Utils
+from nxp.sw.amp.pe.utils.helper.utils import Utils
 
 
 class GitUtils:

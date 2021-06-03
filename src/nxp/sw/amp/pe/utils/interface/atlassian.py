@@ -19,9 +19,9 @@ import threading
 from bs4 import BeautifulSoup
 from collections import defaultdict, namedtuple
 from distutils import util
-from nxp.utilsNG.helper.pull_request import ReviewStatistics
-from nxp.utilsNG.helper.rest import HttpStatusCodes, RESTUtils
-from nxp.utilsNG.helper.utils import Utils
+from nxp.sw.amp.pe.utils.helper.pull_request import ReviewStatistics
+from nxp.sw.amp.pe.utils.helper.rest import HttpStatusCodes, RESTUtils
+from nxp.sw.amp.pe.utils.helper.utils import Utils
 from multiprocessing.pool import ThreadPool
 from multiprocessing import cpu_count
 from random import randrange
@@ -29,7 +29,7 @@ from service import AutomationJob
 from tldextract import extract
 
 
-__copyright__ = "Copyright 2019-2021 NXP"
+__copyright__ = "Copyright 2021 NXP"
 
 
 class BitbucketTag(object):

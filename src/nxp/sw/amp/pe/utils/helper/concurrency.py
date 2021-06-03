@@ -3,7 +3,7 @@
 concurrency.py: This module contains helper routines related to concurrency (multi-threading, multi-process)
 """
 
-__copyright__ = "Copyright 2018-2020 NXP"
+__copyright__ = "Copyright 2021 NXP"
 
 import hashlib
 import inspect
@@ -11,9 +11,9 @@ import os
 import sys
 import traceback
 
-from nxp.utilsNG.generic.exceptions import DatabaseError
-from nxp.utilsNG.helper.constants import DatabaseConstants
-from nxp.utilsNG.helper.sqlite_utils import SqliteUtils
+from nxp.sw.amp.pe.utils.generic.exceptions import DatabaseError
+from nxp.sw.amp.pe.utils.helper.constants import DatabaseConstants
+from nxp.sw.amp.pe.utils.helper.sqlite_utils import SqliteUtils
 from threading import Lock as ThreadLock, Thread
 from time import time, sleep
 from datetime import datetime
@@ -62,7 +62,7 @@ class FileLock(Lock):
         :param path: the path to the file used as a lock
         """
         # the import is done locally in order to avoid circular dependency (utils->concurrency->utils)
-        from nxp.utilsNG.helper.utils import Utils
+        from nxp.sw.amp.pe.utils.helper.utils import Utils
         self.unique_id = hashlib.md5(os.path.split(path)[1]).hexdigest()
         self.__lock_path = os.path.join(os.path.split(path)[0], self.unique_id)
         self.__lock_reference = path
@@ -503,7 +503,7 @@ class FileBasedTaskDispatcher(AbstractTaskDispatcher):
             for task in self.tasks:
                 f.write(str(task.id) + '#' + Task.TaskState.Not_Started + '\n')
             # wait for the write to finish
-            from nxp.utilsNG.helper.utils import Utils
+            from nxp.sw.amp.pe.utils.helper.utils import Utils
             Utils.wait_for_disk_write(f)
 
     def delete_tasks_database(self):
@@ -559,7 +559,7 @@ class FileBasedTaskDispatcher(AbstractTaskDispatcher):
         """
 
         # the import is done locally in order to avoid circular dependency (utils->concurrency->utils)
-        from nxp.utilsNG.helper.utils import Utils
+        from nxp.sw.amp.pe.utils.helper.utils import Utils
 
         # The tasks state file is located on a mapped network drive and its state may not be updated in real time
         # so we must wait (up to a timeout) until the file is released.
@@ -634,7 +634,7 @@ class FileBasedTaskDispatcher(AbstractTaskDispatcher):
                 with open(self.agents_database, 'a+') as f:
                     f.write(self.agent_id + '\n')
                     # wait for the write to finish
-                    from nxp.utilsNG.helper.utils import Utils
+                    from nxp.sw.amp.pe.utils.helper.utils import Utils
                     Utils.wait_for_disk_write(f)
                 self.log('Remote agent {0} has been registered.'.format(self.agent_id))
         except Exception:
@@ -661,7 +661,7 @@ class FileBasedTaskDispatcher(AbstractTaskDispatcher):
                             f.write(agent)
                     f.truncate()
                     # wait for the write to finish
-                    from nxp.utilsNG.helper.utils import Utils
+                    from nxp.sw.amp.pe.utils.helper.utils import Utils
                     Utils.wait_for_disk_write(f)
                 self.log('Remote agent {0} has been un-registered.'.format(self.agent_id))
         except Exception:

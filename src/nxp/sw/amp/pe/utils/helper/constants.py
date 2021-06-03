@@ -1,6 +1,6 @@
 """Used to record constants declarations. Please use it only for variables that might change their values over time"""
 
-__copyright__ = "Copyright 2020 NXP"
+__copyright__ = "Copyright 2021 NXP"
 
 # Synchronization constants. Used by sync_workers_utils
 SYNC_WORKERS_SQLITE_FILE = r'_PROCESSOR_\Builds\locks\sync_workers.db'

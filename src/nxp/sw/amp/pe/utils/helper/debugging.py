@@ -3,7 +3,7 @@
 
 from pprint import pprint
 
-__copyright__ = "Copyright 2019-2021 NXP"
+__copyright__ = "Copyright 2021 NXP"
 
 
 class FunctionDebug(object):
