@@ -2,11 +2,11 @@
 
 import os
 
-from helper.utils import Utils
+from nxp.sw.amp.pe.utils.helper.utils import Utils
 from multiprocessing import cpu_count
 
 
-__copyright__ = "2019 NXP Semiconductors."
+__copyright__ = "Copyright 2021 NXP"
 
 
 class GoogleRepoUtils(object):

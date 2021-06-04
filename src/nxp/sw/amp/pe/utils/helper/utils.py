@@ -31,9 +31,9 @@ import zipfile
 from ast import literal_eval
 from datetime import datetime
 from distutils import util
-from generic.exceptions import AcquireResourceTimeoutError, ThreadingLockError
-from helper.concurrency import FileLock, ThreadingLock
-from helper.shared_drive_mounting_utils import SharedDriveMountingUtils
+from nxp.sw.amp.pe.utils.generic.exceptions import AcquireResourceTimeoutError, ThreadingLockError
+from nxp.sw.amp.pe.utils.helper.concurrency import FileLock, ThreadingLock
+from nxp.sw.amp.pe.utils.helper.shared_drive_mounting_utils import SharedDriveMountingUtils
 from json import dumps
 from multiprocessing.dummy import Pool as ThreadPool
 from time import time, sleep
@@ -56,7 +56,7 @@ if PLATFORM == 'Windows':
     except ImportError:
         import winreg
 
-__copyright__ = "2020 NXP Semiconductors. All rights reserved."
+__copyright__ = "Copyright 2021 NXP"
 
 
 class Utils(object):
