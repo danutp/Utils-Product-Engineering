@@ -1711,7 +1711,7 @@ class BambooUtils(AtlassianUtils):
         """
 
         if query_type not in self.query_types.KNOWN_QUERY_TYPES:
-            raise ValueError("Query type not supported!")
+            raise ValueError("Query type: '{0}' not supported!".format(query_type))
 
         if query_type == self.query_types.TRIGGER_PLAN_QUERY:
             return "{url}{build_key}.json".format(
