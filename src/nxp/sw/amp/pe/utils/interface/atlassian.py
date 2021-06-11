@@ -357,8 +357,7 @@ class AtlassianUtils(object):
         return RESTUtils.get(url,
                              headers=headers,
                              auth=AtlassianAccount(),
-                             timeout=timeout,
-                             destination_file=destination_file)
+                             timeout=timeout)
 
     @staticmethod
     @RESTUtils.pack_response_to_client
@@ -1914,7 +1913,7 @@ class BambooUtils(AtlassianUtils):
                 build_key=build_key, timeout=kill_timeout
             )
         )
-        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [self.bamboo_server, build_key, "stop_plan"])
+        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [build_key, "stop_plan"])
         kill_timer.start()
 
         return kill_timer
