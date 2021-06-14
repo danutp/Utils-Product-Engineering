@@ -1649,6 +1649,7 @@ class BambooUtils(AtlassianUtils):
         super(BambooUtils, self).__init__(project_key)
         self.__query_types = BambooUtils.BambooQueryTypes
         self.__bamboo_server = self.get_bamboo_server()
+        self.__bamboo_branch_name = self.get_bamboo_branch_name()
 
     @property
     def query_types(self):
@@ -1661,6 +1662,12 @@ class BambooUtils(AtlassianUtils):
         """Return the coverity server"""
 
         return self.__bamboo_server
+
+    @property
+    def bamboo_branch_name(self):
+        """Return the coverity server"""
+
+        return self.__bamboo_branch_name
 
     @staticmethod
     def get_artifacts_from_html_page(page_content):
@@ -1699,7 +1706,24 @@ class BambooUtils(AtlassianUtils):
         except Exception as exc:  # noqa: E722
             print("Could not get Bamboo server name: {0}".format(exc))
 
+        print("\nINFO: Running on Bamboo server: {0}".format(server_name))
+
         return server_name
+
+    def get_bamboo_branch_name(self):
+        """Get the bamboo branch name from 'bamboo_planName' plan variable
+        e.g: bamboo_planName=ARTD - Nightly - BLN_RTD_4.4_S32K1XX_0.8.0 --> branch name: BLN_RTD_4.4_S32K1XX_0.8.0"""
+
+        plan_name = self.get_bamboo_env('planName')
+        branch_name = None
+        try:
+            branch_name = plan_name.split('-')[2].strip()
+        except Exception as exc:  # noqa: E722
+            print("Could not get Bamboo branch name: {0}".format(exc))
+
+        print("\nINFO: Current Bamboo branch name is {0}".format(branch_name))
+
+        return branch_name
 
     def create_url(self, query_type, build_key=None, job=None, artifact=None, url_query_string=None):
         """Dynamically create a URL based on provided arguments.
