@@ -1706,7 +1706,7 @@ class BambooUtils(AtlassianUtils):
         except Exception as exc:  # noqa: E722
             print("Could not get Bamboo server name: {0}".format(exc))
 
-        print("\nINFO: Running on Bamboo server: {0}".format(server_name))
+        print("\nINFO: Running on Bamboo server: '{0}'".format(server_name))
 
         return server_name
 
@@ -1721,7 +1721,7 @@ class BambooUtils(AtlassianUtils):
         except Exception as exc:  # noqa: E722
             print("Could not get Bamboo branch name: {0}".format(exc))
 
-        print("\nINFO: Current Bamboo branch name is {0}".format(branch_name))
+        print("\nINFO: Current Bamboo branch name is: '{0}'".format(branch_name))
 
         return branch_name
 
