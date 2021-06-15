@@ -1843,10 +1843,8 @@ class BambooUtils(AtlassianUtils):
         if not all((build_key, job, artifact)):
             return {'content': "Incorrect input provided!"}
 
-        url_query_string = url_query_string or ''
-
         url = self.create_url(self.query_types.ARTIFACT_QUERY, build_key=build_key, job=job, artifact=artifact,
-                              url_query_string=url_query_string)
+                              url_query_string=url_query_string or '')
         print("URL used to query for artifacts: '{url}'".format(url=url))
 
         response = self.rest_get(url)
