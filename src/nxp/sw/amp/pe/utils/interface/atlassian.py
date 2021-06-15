@@ -64,10 +64,10 @@ class AtlassianAccount(object):
         # Get the path of the runner
         # [-1] -> The first call on stack (entry_point.py)
         # [1] -> The file name (full path of the entry_point.py runner)
-        runner_path = inspect.stack()[-1][1]
+        runner_path = os.path.dirname(os.path.abspath(inspect.stack()[-1][1]))
 
         # Get the current module name and strip the package root identifier (nxp) and the specific package (utilsNG)
-        module = os.path.join(*self.__module__.split('.')[2:])
+        module = os.path.join(*self.__module__.split('.')[5:])
 
         credentials_file = open(os.path.join(
             os.path.dirname(
@@ -1810,20 +1810,16 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_query_build(self, query_type=None, build_key=None):
+    def bamboo_query_build(self, build_key):
         """Method to query a plan build using Bamboo API.
 
-        :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/query_results>) [string]
         :param build_key: Bamboo build key [string]
 
         :return: A named tuple containing HTTP status_code and request content
         :raise: Exception, ValueError on errors
         """
 
-        if not all((query_type, build_key)):
-            return {'content': "Incorrect input provided!"}
-
-        url = self.create_url(query_type, build_key=build_key)
+        url = self.create_url(self.query_types.PLAN_QUERY, build_key=build_key)
         print("URL used in query: '{url}'".format(url=url))
 
         response = self.rest_get(url)
@@ -1832,12 +1828,10 @@ class BambooUtils(AtlassianUtils):
 
         return response
 
-    def bamboo_query_build_for_artifacts(self, build_key=None, query_type=None,
-                                         job=None, artifact=None, url_query_string=None):
+    def bamboo_query_build_for_artifacts(self, build_key=None, job=None, artifact=None, url_query_string=None):
         """Method to query Bamboo plan run for stage artifacts
 
         :param build_key: Bamboo build key [string]
-        :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/download_artifact>) [string]
         :param job: Bamboo plan job name [string]
         :param artifact: Name of the artifact as in Bamboo plan stage job [string]
         :param url_query_string: Query string to compound the URL [string]
@@ -1846,12 +1840,12 @@ class BambooUtils(AtlassianUtils):
         :raise: Exception, ValueError on Errors
         """
 
-        if not all((build_key, query_type, job, artifact)):
+        if not all((build_key, job, artifact)):
             return {'content': "Incorrect input provided!"}
 
         url_query_string = url_query_string or ''
 
-        url = self.create_url(query_type, build_key=build_key, job=job, artifact=artifact,
+        url = self.create_url(self.query_types.ARTIFACT_QUERY, build_key=build_key, job=job, artifact=artifact,
                               url_query_string=url_query_string)
         print("URL used to query for artifacts: '{url}'".format(url=url))
 
@@ -1861,13 +1855,12 @@ class BambooUtils(AtlassianUtils):
 
         return self.get_artifacts_from_html_page(response.content)
 
-    def bamboo_get_artifact(self, build_key=None, query_type=None,
-                            stage=None, artifact=None, url_query_string=None, destination_file=None):
+    def bamboo_get_artifact(self, build_key=None, job=None, artifact=None, url_query_string=None,
+                            destination_file=None):
         """Method to download artifact from Bamboo plan
 
         :param build_key: Bamboo build key [string]
-        :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/download_artifact>) [string]
-        :param stage: Bamboo plan stage name [string]
+        :param job: Bamboo plan job name [string]
         :param artifact: Name of the artifact as in Bamboo plan stage job [string]
         :param url_query_string: Query string to compound the URL [string]
         :param destination_file: Full path to destination file [string]
@@ -1876,23 +1869,23 @@ class BambooUtils(AtlassianUtils):
         :raise: Exception, ValueError on Errors
         """
 
-        if not all((build_key, query_type, stage, artifact, destination_file)):
+        if not all((build_key, job, artifact, destination_file)):
             return {'content': "Incorrect input provided!"}
 
-        url = self.create_url(build_key, query_type, stage, artifact, url_query_string or '')
+        url = self.create_url(self.query_types.ARTIFACT_QUERY, build_key=build_key, job=job, artifact=artifact,
+                              url_query_string=url_query_string or '')
         print("URL used to download artifact: '{url}'".format(url=url))
 
-        response = self.rest_get(url, query_type, destination_file=destination_file)
+        response = self.rest_get(url, destination_file=destination_file)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError('Could not get the requested artifact {0}'.format(artifact))
 
         return response
 
-    def bamboo_stop_build(self, build_key=None, query_type=None):
+    def bamboo_stop_build(self, build_key=None):
         """Method to stop a running plan from Bamboo using Bamboo API
 
         :param build_key: Bamboo build key [string]
-        :param query_type: Type of the query (e.g.: <plan_info/plan_status/stop_plan/query_results>) [string]
 
         :return: A named tuple containing HTTP status_code and request content
         :raise: Exception, ValueError on errors
@@ -1901,7 +1894,7 @@ class BambooUtils(AtlassianUtils):
         if not build_key:
             return {'content': "Incorrect input provided!"}
 
-        url = self.create_url(build_key, query_type)
+        url = self.create_url(self.query_types.STOP_PLAN_QUERY, build_key=build_key)
         print("URL used to stop plan: '{url}'".format(url=url))
 
         response = self.rest_post(url)
