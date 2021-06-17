@@ -470,7 +470,7 @@ class JiraUtils(AtlassianUtils):
 
         url = AtlassianUtils.JIRA_DEFECT_EDIT_INFO_URL.format(jira_id)
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot get defect information for jira id "{0}": {1}'.format(
                     jira_id, response.content)
@@ -513,7 +513,7 @@ class JiraUtils(AtlassianUtils):
 
         url = AtlassianUtils.JIRA_DEFECT_TRANSITIONS_INFO_EXTENDED_URL.format(jira_id)
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot get jira transition id for "{0}" id: {1}'.format(
                     jira_id, response.content)
@@ -582,7 +582,7 @@ class JiraUtils(AtlassianUtils):
 
         url = AtlassianUtils.JIRA_DEFECT_INFO_URL.format(jira_id)
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot get jira field value for "{0}" id: {1}'.format(
                     jira_id, response.content)
@@ -605,7 +605,7 @@ class JiraUtils(AtlassianUtils):
 
         url = AtlassianUtils.JIRA_USER_SEARCH_URL.format(self.project_key, query)
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot get jira users for project "{0}": {1}'.format(
                     self.project_key, response.content)
@@ -649,7 +649,7 @@ class JiraUtils(AtlassianUtils):
             payload['maxResults'] = '{0}'.format(max_results)
 
         response = self.rest_post(AtlassianUtils.JIRA_QUERY_URL, payload=payload)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot run query "{0}": {1}'.format(query, response.content)
             )
@@ -797,7 +797,7 @@ class BitbucketUtils(AtlassianUtils):
             url = AtlassianUtils.BITBUCKET_GET_FILES_URL.format(repo_slug, repo_key, next_page_start)
 
             response = self.rest_get(url)
-            if response != HttpStatusCodes.SUCCESS_OK:
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
                 raise RuntimeError(
                     'Cannot read repo "{0}" content: {1}'.format(
                         '{0}-{1}'.format(repo_slug, repo_key), response.content)
@@ -827,7 +827,7 @@ class BitbucketUtils(AtlassianUtils):
         url = AtlassianUtils.BITBUCKET_GET_FILE_URL.format(repo_slug, repo_key, file_path)
 
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError('Cannot read file from "{0}": {1}'.format(url, response.content))
 
         data = json.loads(response.content)
@@ -1562,12 +1562,12 @@ class BitbucketUtils(AtlassianUtils):
             payload['description'] = description_header + description.strip()
             # reviewers must be set each time the pull request changes, otherwise they'll be automatically removed
             payload['reviewers'] = pull_request['reviewers']
-            try:
-                url = AtlassianUtils.BITBUCKET_PULL_REQUEST_INFO_URL.format(self.project_key, repo, id_)
-                self.rest_put(url, payload=payload)
-            except:  # noqa: E722
+
+            url = AtlassianUtils.BITBUCKET_PULL_REQUEST_INFO_URL.format(self.project_key, repo, id_)
+            response = self.rest_put(url, payload=payload)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
                 print('Adding {0} to pull request id {1} failed'.format(description_header, id_))
-                raise
+                return False
 
         return True
 
@@ -1896,7 +1896,7 @@ class BambooUtils(AtlassianUtils):
         print("URL used to stop plan: '{url}'".format(url=url))
 
         response = self.rest_post(url)
-        if response.status_code != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.REDIRECT_FOUND:
             raise RuntimeError('Could not stop build for plan having build key {0}'.format(build_key))
 
         return response
@@ -1928,7 +1928,7 @@ class BambooUtils(AtlassianUtils):
                 build_key=build_key, timeout=kill_timeout
             )
         )
-        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [build_key, "stop_plan"])
+        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [build_key])
         kill_timer.start()
 
         return kill_timer

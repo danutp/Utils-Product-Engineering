@@ -19,6 +19,8 @@ class HttpStatusCodes:
     SUCCESS_CREATED = 201
     SUCCESS_NO_CONTENT = 204
 
+    REDIRECT_FOUND = 302
+
     FAIL_BAD_REQUEST = 400
     FAIL_UNAUTHORIZED = 401
     FAIL_FORBIDDEN = 403
@@ -67,14 +69,20 @@ class RESTUtils:
                      within the request
             """
 
-            packed_response = namedtuple('packed_response', ['response', 'status_code', 'content', 'url'])
+            packed_response = namedtuple('packed_response', ['status_code', 'content', 'json', 'url'])
 
             response = func(*args, **kwargs)
 
+            try:
+                json_response = response.json()
+            except Exception:  # noqa: E722
+                print("WARNING: No json response available, content should be used instead")
+                json_response = None
+
             return packed_response(
-                response=True if response.status_code == HttpStatusCodes.SUCCESS_OK else False,
                 status_code=response.status_code,
                 content=response.content,
+                json=json_response,
                 url=response.url
             )
 
