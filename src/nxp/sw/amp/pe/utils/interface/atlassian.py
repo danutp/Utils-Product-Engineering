@@ -1806,7 +1806,8 @@ class BambooUtils(AtlassianUtils):
 
         response = self.rest_post(url, payload=payload)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not trigger build for plan {0}'.format(build_key))
+            raise RuntimeError("Could not trigger build for plan {0}, request content: '{1}'".format(
+                build_key, response.content))
 
         return response
 
@@ -1824,7 +1825,8 @@ class BambooUtils(AtlassianUtils):
 
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not query plan build having build key {0}'.format(build_key))
+            raise RuntimeError("Could not query plan build having build key {0}, request content: '{1}'".format(
+                build_key, response.content))
 
         return response
 
@@ -1849,7 +1851,8 @@ class BambooUtils(AtlassianUtils):
 
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not query plan build having build key {0} for artifacts'.format(build_key))
+            raise RuntimeError("Could not query plan build having build key {0} for artifacts, request content: '{1}'".
+                               format(build_key, response.content))
 
         return self.get_artifacts_from_html_page(response.content)
 
@@ -1876,7 +1879,8 @@ class BambooUtils(AtlassianUtils):
 
         response = self.rest_get(url, destination_file=destination_file)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not get the requested artifact {0}'.format(artifact))
+            raise RuntimeError("Could not get the requested artifact {0}, request content: '{1}'".format(
+                artifact, response.content))
 
         return response
 
@@ -1897,7 +1901,8 @@ class BambooUtils(AtlassianUtils):
 
         response = self.rest_post(url)
         if response.status_code != HttpStatusCodes.REDIRECT_FOUND:
-            raise RuntimeError('Could not stop build for plan having build key {0}'.format(build_key))
+            raise RuntimeError("Could not stop build for plan having build key {0}, request content: '{1}'".format(
+                build_key, response.content))
 
         return response
 
@@ -1925,7 +1930,7 @@ class BambooUtils(AtlassianUtils):
         print(
             "{0}Watching the current Bamboo JOB under plan '{1}' for a timeout period of: '{2}' seconds{0}".format(
                 os.linesep,
-                build_key, 
+                build_key,
                 kill_timeout
             )
         )
@@ -1945,7 +1950,8 @@ class BambooUtils(AtlassianUtils):
         url = AtlassianUtils.BAMBOO_PLAN_BRANCH_REQUEST_URL.format(plan_key, branch_name)
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not get info for plan branch {0}'.format(branch_name))
+            raise RuntimeError("Could not get info for plan branch {0}, request content: '{1}'".format(
+                branch_name, response.content))
 
         return response
 
@@ -1960,7 +1966,8 @@ class BambooUtils(AtlassianUtils):
 
         response = self.rest_get(request_url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not get branch key for plan branch {0}'.format(plan_branch))
+            raise RuntimeError("Could not get branch key for plan branch {0}, request content: '{1}'".format(
+                plan_branch, response.content))
 
         # check whether branch is configured in the plan
         branch_key = None
@@ -1990,7 +1997,8 @@ class BambooUtils(AtlassianUtils):
 
             response = self.rest_get(build_url)
             if response.status_code != HttpStatusCodes.SUCCESS_OK:
-                raise RuntimeError('Could not query build at {0}'.format(build_url))
+                raise RuntimeError("Could not query build at {0}, request content: '{1}'".format(
+                    build_url, response.content))
 
             build_status = json.loads(response.content)["buildState"]
             if build_status != "Unknown":
@@ -2035,7 +2043,8 @@ class BambooUtils(AtlassianUtils):
 
         response = self.rest_post(request_url, payload=request_data)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not trigger build at {0}'.format(request_url))
+            raise RuntimeError("Could not trigger build at {0}, request content: '{1}'".format(
+                request_url, response.content))
 
         Utils.print_with_header("Build Triggered: {0}".format(request_url))
 
