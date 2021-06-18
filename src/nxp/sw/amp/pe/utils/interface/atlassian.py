@@ -1704,9 +1704,9 @@ class BambooUtils(AtlassianUtils):
             sub_domain = extract_instance[0]
             server_name = sub_domain.split('.')[0]
         except Exception as exc:  # noqa: E722
-            print("Could not get Bamboo server name: {0}".format(exc))
+            print("{0}Could not get Bamboo server name: {1}".format(os.linesep, exc))
 
-        print("\nINFO: Running on Bamboo server: '{0}'".format(server_name))
+        print("{0}INFO: Running on Bamboo server: '{1}'".format(os.linesep, server_name))
 
         return server_name
 
@@ -1719,9 +1719,9 @@ class BambooUtils(AtlassianUtils):
         try:
             branch_name = plan_name.split('-')[2].strip()
         except Exception as exc:  # noqa: E722
-            print("Could not get Bamboo branch name: {0}".format(exc))
+            print("{0}Could not get Bamboo branch name: {1}".format(os.linesep, exc))
 
-        print("\nINFO: Current Bamboo branch name is: '{0}'".format(branch_name))
+        print("{0}INFO: Current Bamboo branch name is: '{1}'".format(os.linesep, branch_name))
 
         return branch_name
 
@@ -1802,7 +1802,7 @@ class BambooUtils(AtlassianUtils):
                 payload[key] = [value]
 
         url = self.create_url(self.query_types.TRIGGER_PLAN_QUERY, build_key=build_key)
-        print("URL used to trigger build: '{url}'".format(url=url))
+        print("{0}URL used to trigger build: '{1}'".format(os.linesep, url))
 
         response = self.rest_post(url, payload=payload)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
@@ -1820,7 +1820,7 @@ class BambooUtils(AtlassianUtils):
         """
 
         url = self.create_url(self.query_types.PLAN_QUERY, build_key=build_key)
-        print("URL used in query: '{url}'".format(url=url))
+        print("{0}URL used in query: '{1}'".format(os.linesep, url))
 
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
@@ -1845,7 +1845,7 @@ class BambooUtils(AtlassianUtils):
 
         url = self.create_url(self.query_types.ARTIFACT_QUERY, build_key=build_key, job=job, artifact=artifact,
                               url_query_string=url_query_string or '')
-        print("URL used to query for artifacts: '{url}'".format(url=url))
+        print("{0}URL used to query for artifacts: '{1}'".format(os.linesep, url))
 
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
@@ -1872,7 +1872,7 @@ class BambooUtils(AtlassianUtils):
 
         url = self.create_url(self.query_types.ARTIFACT_QUERY, build_key=build_key, job=job, artifact=artifact,
                               url_query_string=url_query_string or '')
-        print("URL used to download artifact: '{url}'".format(url=url))
+        print("{0}URL used to download artifact: '{1}'".format(os.linesep, url))
 
         response = self.rest_get(url, destination_file=destination_file)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
@@ -1893,7 +1893,7 @@ class BambooUtils(AtlassianUtils):
             return {'content': "Incorrect input provided!"}
 
         url = self.create_url(self.query_types.STOP_PLAN_QUERY, build_key=build_key)
-        print("URL used to stop plan: '{url}'".format(url=url))
+        print("{0}URL used to stop plan: '{1}'".format(os.linesep, url))
 
         response = self.rest_post(url)
         if response.status_code != HttpStatusCodes.REDIRECT_FOUND:
@@ -1913,19 +1913,20 @@ class BambooUtils(AtlassianUtils):
         """
 
         if kill_after_timeout == -1:
-            print("\nAborting the execution of the method as 'kill_after_timeout = -1'!\n")
+            print("{0}Aborting the execution of the method as 'kill_after_timeout = -1'!{0}".format(os.linesep))
             return None
 
         if not build_key:
-            print("\nNo build key supplied!\n")
+            print("{0}No build key supplied!{0}".format(os.linesep))
             return None
 
         kill_timeout = float(kill_after_timeout)
 
         print(
-            "\nWatching the current Bamboo JOB under plan '{build_key}' "
-            "for a timeout period of: '{timeout}' seconds\n".format(
-                build_key=build_key, timeout=kill_timeout
+            "{0}Watching the current Bamboo JOB under plan '{1}' for a timeout period of: '{2}' seconds{0}".format(
+                os.linesep,
+                build_key, 
+                kill_timeout
             )
         )
         kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [build_key])
@@ -1995,13 +1996,16 @@ class BambooUtils(AtlassianUtils):
             if build_status != "Unknown":
                 break
             else:
-                print("Triggered build is still running, waiting 60 more seconds for build completion")
+                print(
+                    "{0}Triggered build is still running, waiting 60 more seconds for build completion".format(
+                        os.linesep)
+                )
             time.sleep(60)
 
         if build_status == "Failed":
             raise RuntimeError("Triggered build failed. Please check {0} for logs".format(build_url))
         else:
-            print("Triggered build was successful")
+            print("{0}Triggered build was successful".format(os.linesep))
 
     def bamboo_build_plan_branch(self, plan_settings, wait_completion=True, timeout=0):
         """Triggers a build in the configured plan.
@@ -2044,8 +2048,10 @@ class BambooUtils(AtlassianUtils):
         """
 
         print(
-            'Posting build plan to Bamboo queue: https://{0}.sw.nxp.com/browse/{1}'.format(
-                self.bamboo_server, build_plan_key
+            '{0}Posting build plan to Bamboo queue: https://{1}.sw.nxp.com/browse/{2}'.format(
+                os.linesep,
+                self.bamboo_server,
+                build_plan_key
             )
         )
 
