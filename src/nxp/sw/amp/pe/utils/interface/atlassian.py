@@ -470,7 +470,7 @@ class JiraUtils(AtlassianUtils):
 
         url = AtlassianUtils.JIRA_DEFECT_EDIT_INFO_URL.format(jira_id)
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot get defect information for jira id "{0}": {1}'.format(
                     jira_id, response.content)
@@ -513,7 +513,7 @@ class JiraUtils(AtlassianUtils):
 
         url = AtlassianUtils.JIRA_DEFECT_TRANSITIONS_INFO_EXTENDED_URL.format(jira_id)
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot get jira transition id for "{0}" id: {1}'.format(
                     jira_id, response.content)
@@ -582,7 +582,7 @@ class JiraUtils(AtlassianUtils):
 
         url = AtlassianUtils.JIRA_DEFECT_INFO_URL.format(jira_id)
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot get jira field value for "{0}" id: {1}'.format(
                     jira_id, response.content)
@@ -605,7 +605,7 @@ class JiraUtils(AtlassianUtils):
 
         url = AtlassianUtils.JIRA_USER_SEARCH_URL.format(self.project_key, query)
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot get jira users for project "{0}": {1}'.format(
                     self.project_key, response.content)
@@ -649,7 +649,7 @@ class JiraUtils(AtlassianUtils):
             payload['maxResults'] = '{0}'.format(max_results)
 
         response = self.rest_post(AtlassianUtils.JIRA_QUERY_URL, payload=payload)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError(
                 'Cannot run query "{0}": {1}'.format(query, response.content)
             )
@@ -797,7 +797,7 @@ class BitbucketUtils(AtlassianUtils):
             url = AtlassianUtils.BITBUCKET_GET_FILES_URL.format(repo_slug, repo_key, next_page_start)
 
             response = self.rest_get(url)
-            if response != HttpStatusCodes.SUCCESS_OK:
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
                 raise RuntimeError(
                     'Cannot read repo "{0}" content: {1}'.format(
                         '{0}-{1}'.format(repo_slug, repo_key), response.content)
@@ -827,7 +827,7 @@ class BitbucketUtils(AtlassianUtils):
         url = AtlassianUtils.BITBUCKET_GET_FILE_URL.format(repo_slug, repo_key, file_path)
 
         response = self.rest_get(url)
-        if response != HttpStatusCodes.SUCCESS_OK:
+        if response.status_code != HttpStatusCodes.SUCCESS_OK:
             raise RuntimeError('Cannot read file from "{0}": {1}'.format(url, response.content))
 
         data = json.loads(response.content)
@@ -1562,12 +1562,12 @@ class BitbucketUtils(AtlassianUtils):
             payload['description'] = description_header + description.strip()
             # reviewers must be set each time the pull request changes, otherwise they'll be automatically removed
             payload['reviewers'] = pull_request['reviewers']
-            try:
-                url = AtlassianUtils.BITBUCKET_PULL_REQUEST_INFO_URL.format(self.project_key, repo, id_)
-                self.rest_put(url, payload=payload)
-            except:  # noqa: E722
+
+            url = AtlassianUtils.BITBUCKET_PULL_REQUEST_INFO_URL.format(self.project_key, repo, id_)
+            response = self.rest_put(url, payload=payload)
+            if response.status_code != HttpStatusCodes.SUCCESS_OK:
                 print('Adding {0} to pull request id {1} failed'.format(description_header, id_))
-                raise
+                return False
 
         return True
 
@@ -1704,9 +1704,9 @@ class BambooUtils(AtlassianUtils):
             sub_domain = extract_instance[0]
             server_name = sub_domain.split('.')[0]
         except Exception as exc:  # noqa: E722
-            print("Could not get Bamboo server name: {0}".format(exc))
+            print("{0}Could not get Bamboo server name: {1}".format(os.linesep, exc))
 
-        print("\nINFO: Running on Bamboo server: '{0}'".format(server_name))
+        print("{0}INFO: Running on Bamboo server: '{1}'".format(os.linesep, server_name))
 
         return server_name
 
@@ -1719,9 +1719,9 @@ class BambooUtils(AtlassianUtils):
         try:
             branch_name = plan_name.split('-')[2].strip()
         except Exception as exc:  # noqa: E722
-            print("Could not get Bamboo branch name: {0}".format(exc))
+            print("{0}Could not get Bamboo branch name: {1}".format(os.linesep, exc))
 
-        print("\nINFO: Current Bamboo branch name is: '{0}'".format(branch_name))
+        print("{0}INFO: Current Bamboo branch name is: '{1}'".format(os.linesep, branch_name))
 
         return branch_name
 
@@ -1802,11 +1802,12 @@ class BambooUtils(AtlassianUtils):
                 payload[key] = [value]
 
         url = self.create_url(self.query_types.TRIGGER_PLAN_QUERY, build_key=build_key)
-        print("URL used to trigger build: '{url}'".format(url=url))
+        print("{0}URL used to trigger build: '{1}'".format(os.linesep, url))
 
         response = self.rest_post(url, payload=payload)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not trigger build for plan {0}'.format(build_key))
+            raise RuntimeError("Could not trigger build for plan {0}, request content: '{1}'".format(
+                build_key, response.content))
 
         return response
 
@@ -1820,11 +1821,12 @@ class BambooUtils(AtlassianUtils):
         """
 
         url = self.create_url(self.query_types.PLAN_QUERY, build_key=build_key)
-        print("URL used in query: '{url}'".format(url=url))
+        print("{0}URL used in query: '{1}'".format(os.linesep, url))
 
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not query plan build having build key {0}'.format(build_key))
+            raise RuntimeError("Could not query plan build having build key {0}, request content: '{1}'".format(
+                build_key, response.content))
 
         return response
 
@@ -1845,11 +1847,12 @@ class BambooUtils(AtlassianUtils):
 
         url = self.create_url(self.query_types.ARTIFACT_QUERY, build_key=build_key, job=job, artifact=artifact,
                               url_query_string=url_query_string or '')
-        print("URL used to query for artifacts: '{url}'".format(url=url))
+        print("{0}URL used to query for artifacts: '{1}'".format(os.linesep, url))
 
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not query plan build having build key {0} for artifacts'.format(build_key))
+            raise RuntimeError("Could not query plan build having build key {0} for artifacts, request content: '{1}'".
+                               format(build_key, response.content))
 
         return self.get_artifacts_from_html_page(response.content)
 
@@ -1872,11 +1875,12 @@ class BambooUtils(AtlassianUtils):
 
         url = self.create_url(self.query_types.ARTIFACT_QUERY, build_key=build_key, job=job, artifact=artifact,
                               url_query_string=url_query_string or '')
-        print("URL used to download artifact: '{url}'".format(url=url))
+        print("{0}URL used to download artifact: '{1}'".format(os.linesep, url))
 
         response = self.rest_get(url, destination_file=destination_file)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not get the requested artifact {0}'.format(artifact))
+            raise RuntimeError("Could not get the requested artifact {0}, request content: '{1}'".format(
+                artifact, response.content))
 
         return response
 
@@ -1893,11 +1897,12 @@ class BambooUtils(AtlassianUtils):
             return {'content': "Incorrect input provided!"}
 
         url = self.create_url(self.query_types.STOP_PLAN_QUERY, build_key=build_key)
-        print("URL used to stop plan: '{url}'".format(url=url))
+        print("{0}URL used to stop plan: '{1}'".format(os.linesep, url))
 
         response = self.rest_post(url)
-        if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not stop build for plan having build key {0}'.format(build_key))
+        if response.status_code != HttpStatusCodes.REDIRECT_FOUND:
+            raise RuntimeError("Could not stop build for plan having build key {0}, request content: '{1}'".format(
+                build_key, response.content))
 
         return response
 
@@ -1913,22 +1918,23 @@ class BambooUtils(AtlassianUtils):
         """
 
         if kill_after_timeout == -1:
-            print("\nAborting the execution of the method as 'kill_after_timeout = -1'!\n")
+            print("{0}Aborting the execution of the method as 'kill_after_timeout = -1'!{0}".format(os.linesep))
             return None
 
         if not build_key:
-            print("\nNo build key supplied!\n")
+            print("{0}No build key supplied!{0}".format(os.linesep))
             return None
 
         kill_timeout = float(kill_after_timeout)
 
         print(
-            "\nWatching the current Bamboo JOB under plan '{build_key}' "
-            "for a timeout period of: '{timeout}' seconds\n".format(
-                build_key=build_key, timeout=kill_timeout
+            "{0}Watching the current Bamboo JOB under plan '{1}' for a timeout period of: '{2}' seconds{0}".format(
+                os.linesep,
+                build_key,
+                kill_timeout
             )
         )
-        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [build_key, "stop_plan"])
+        kill_timer = threading.Timer(kill_timeout, self.bamboo_stop_build, [build_key])
         kill_timer.start()
 
         return kill_timer
@@ -1944,7 +1950,8 @@ class BambooUtils(AtlassianUtils):
         url = AtlassianUtils.BAMBOO_PLAN_BRANCH_REQUEST_URL.format(plan_key, branch_name)
         response = self.rest_get(url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not get info for plan branch {0}'.format(branch_name))
+            raise RuntimeError("Could not get info for plan branch {0}, request content: '{1}'".format(
+                branch_name, response.content))
 
         return response
 
@@ -1959,7 +1966,8 @@ class BambooUtils(AtlassianUtils):
 
         response = self.rest_get(request_url)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not get branch key for plan branch {0}'.format(plan_branch))
+            raise RuntimeError("Could not get branch key for plan branch {0}, request content: '{1}'".format(
+                plan_branch, response.content))
 
         # check whether branch is configured in the plan
         branch_key = None
@@ -1989,19 +1997,23 @@ class BambooUtils(AtlassianUtils):
 
             response = self.rest_get(build_url)
             if response.status_code != HttpStatusCodes.SUCCESS_OK:
-                raise RuntimeError('Could not query build at {0}'.format(build_url))
+                raise RuntimeError("Could not query build at {0}, request content: '{1}'".format(
+                    build_url, response.content))
 
             build_status = json.loads(response.content)["buildState"]
             if build_status != "Unknown":
                 break
             else:
-                print("Triggered build is still running, waiting 60 more seconds for build completion")
+                print(
+                    "{0}Triggered build is still running, waiting 60 more seconds for build completion".format(
+                        os.linesep)
+                )
             time.sleep(60)
 
         if build_status == "Failed":
             raise RuntimeError("Triggered build failed. Please check {0} for logs".format(build_url))
         else:
-            print("Triggered build was successful")
+            print("{0}Triggered build was successful".format(os.linesep))
 
     def bamboo_build_plan_branch(self, plan_settings, wait_completion=True, timeout=0):
         """Triggers a build in the configured plan.
@@ -2031,7 +2043,8 @@ class BambooUtils(AtlassianUtils):
 
         response = self.rest_post(request_url, payload=request_data)
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
-            raise RuntimeError('Could not trigger build at {0}'.format(request_url))
+            raise RuntimeError("Could not trigger build at {0}, request content: '{1}'".format(
+                request_url, response.content))
 
         Utils.print_with_header("Build Triggered: {0}".format(request_url))
 
@@ -2044,8 +2057,10 @@ class BambooUtils(AtlassianUtils):
         """
 
         print(
-            'Posting build plan to Bamboo queue: https://{0}.sw.nxp.com/browse/{1}'.format(
-                self.bamboo_server, build_plan_key
+            '{0}Posting build plan to Bamboo queue: https://{1}.sw.nxp.com/browse/{2}'.format(
+                os.linesep,
+                self.bamboo_server,
+                build_plan_key
             )
         )
 
