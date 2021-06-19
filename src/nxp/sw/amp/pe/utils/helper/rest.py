@@ -76,7 +76,7 @@ class RESTUtils:
             try:
                 json_response = response.json()
             except Exception:  # noqa: E722
-                print("WARNING: No json response available, content should be used instead")
+                print("{0}WARNING: No json response available, content should be used instead{0}".format(os.linesep))
                 json_response = None
 
             return packed_response(
@@ -105,16 +105,16 @@ class RESTUtils:
         if response.status_code != HttpStatusCodes.SUCCESS_OK:
             if error_on_fail:
                 raise Exception('Failed to fetch the requested resource: {0}'.format(url))
-            print('WARNING: Failed to fetch the requested resource: {0}'.format(url))
+            print('{0}WARNING: Failed to fetch the requested resource: {1}{0}'.format(os.linesep, url))
 
         mode = 'w' if Utils.is_text(response.content) else 'wb'
 
         try:
             with open(destination, mode) as fd_out:
                 fd_out.write(response.content)
-            print('Successfully downloaded resource from {0} into {1}'.format(url, destination))
+            print('{0}Successfully downloaded resource from {1} into {2}{0}'.format(os.linesep, url, destination))
         except Exception as exc:
-            print('Failed to write the destination file {0}: {1}'.format(destination, exc))
+            print('{0}Failed to write the destination file {1}: {2}{0}'.format(os.linesep, destination, exc))
 
     @staticmethod
     def make_request(url, request_method, headers=None, auth=None, payload=None, timeout=None, allow_redirects=False,
