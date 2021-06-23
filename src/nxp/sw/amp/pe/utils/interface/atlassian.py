@@ -48,39 +48,29 @@ class AtlassianAccount(object):
     """
 
     def __init__(self):
-        self.__username, self.__password = self.__load_credentials()
+        self.__username = None
+        self.__password = None
 
     @property
     def username(self):
+        """Get the username"""
         return self.__username
+
+    @username.setter
+    def username(self, username_value):
+        """Set the username"""
 
     @property
     def password(self):
-        return self.__password
+        """Get the decoded password"""
 
-    def __load_credentials(self):
-        # TODO Retrieve the credentials from client instead of seeking the json file within the module
+        return base64.b64decode(self.__password)
 
-        # Get the path of the runner
-        # [-1] -> The first call on stack (entry_point.py)
-        # [1] -> The file name (full path of the entry_point.py runner)
-        runner_path = os.path.dirname(os.path.abspath(inspect.stack()[-1][1]))
+    @password.setter
+    def password(self, password_value):
+        """Set the encoded password"""
 
-        # Get the current module name and strip the package root identifier (nxp) and the specific package (utilsNG)
-        module = os.path.join(*self.__module__.split('.')[5:])
-
-        credentials_file = open(os.path.join(
-            os.path.dirname(
-                os.path.dirname(os.path.join(runner_path, module))), 'helper', 'bamboo', 'auth_credentials.json'
-        ))
-
-        print("Using {0} as credentials file".format(credentials_file))
-
-        # Change to <PATH>/interface/../helper/atlassian and read the configuration file
-        with credentials_file as fd:
-            credentials = json.loads(fd.read())
-
-        return credentials['username'], base64.b64decode(credentials['password'])
+        self.__password = password_value
 
 
 class AtlassianUtils(object):
@@ -240,17 +230,23 @@ class AtlassianUtils(object):
     )
 
     def __init__(self,
-                 project_key,
-                 account_info=AtlassianAccount()):
+                 username,
+                 password):
 
         """
-        :param project_key: the unique project key (e.g. Jira)
-        :param account_info: The account info to use for any Atlassian, REST call based operations
+        :param username: The username to use for any Atlassian, REST call based operations
                By default it's a service account
+        :param password: The (encoded) password to be used
         """
 
-        self.project_key = project_key
-        self.account_info = account_info
+        self.__account_info = None
+        self.__set_credentials(username, password)
+
+    @property
+    def account_info(self):
+        """Get the account info"""
+
+        return self.__account_info
 
     #
     # Each Bamboo variable is visible as an environment variable.
@@ -339,9 +335,8 @@ class AtlassianUtils(object):
                 return [item]
         return None
 
-    @staticmethod
     @RESTUtils.pack_response_to_client
-    def rest_get(url, headers=None, timeout=None, destination_file=None):
+    def rest_get(self, url, headers=None, timeout=None, destination_file=None):
         """
         Runs a GET REST call on JIRA, Bitbucket or Bamboo
         :param url: REST service URL
@@ -352,16 +347,15 @@ class AtlassianUtils(object):
         """
 
         if destination_file:
-            return RESTUtils.download(url, auth=AtlassianAccount(), timeout=timeout, destination=destination_file)
+            return RESTUtils.download(url, auth=self.account_info, timeout=timeout, destination=destination_file)
 
         return RESTUtils.get(url,
                              headers=headers,
-                             auth=AtlassianAccount(),
+                             auth=self.account_info,
                              timeout=timeout)
 
-    @staticmethod
     @RESTUtils.pack_response_to_client
-    def rest_post(url, headers=None, payload=None, timeout=None):
+    def rest_post(self, url, headers=None, payload=None, timeout=None):
         """
         Runs a POST REST call on JIRA
         :param url: REST service URL
@@ -373,13 +367,12 @@ class AtlassianUtils(object):
 
         return RESTUtils.post(url,
                               headers=headers,
-                              auth=AtlassianAccount(),
+                              auth=self.account_info,
                               payload=payload,
                               timeout=timeout)
 
-    @staticmethod
     @RESTUtils.pack_response_to_client
-    def rest_put(url, headers=None, payload=None, timeout=None):
+    def rest_put(self, url, headers=None, payload=None, timeout=None):
         """
         Runs a PUT REST call on JIRA
         :param url: REST service URL
@@ -391,13 +384,12 @@ class AtlassianUtils(object):
 
         return RESTUtils.put(url,
                              headers=headers,
-                             auth=AtlassianAccount(),
+                             auth=self.account_info,
                              payload=payload,
                              timeout=timeout)
 
-    @staticmethod
     @RESTUtils.pack_response_to_client
-    def rest_delete(url, headers=None, payload=None, timeout=None):
+    def rest_delete(self, url, headers=None, payload=None, timeout=None):
         """
         Runs a POST REST call on JIRA
         :param url: REST service URL
@@ -409,16 +401,34 @@ class AtlassianUtils(object):
 
         return RESTUtils.delete(url,
                                 headers=headers,
-                                auth=AtlassianAccount(),
+                                auth=self.account_info,
                                 payload=payload,
                                 timeout=timeout)
+
+    def __set_credentials(self, username, password):
+        """Set the credentials for the Atlassian account"""
+
+        self.__account_info = AtlassianAccount()
+        self.__account_info.username = username
+        self.__account_info.password = password
 
 
 class JiraUtils(AtlassianUtils):
 
-    def __init__(self, project_key):
+    def __init__(self, jira_project_key, username, password):
+        """
+        :param jira_project_key: the unique project key (e.g. Jira)
+        :param username: The username to use for any Atlassian, REST call based operations
+        :param password: The (encoded) password to be used
+        """
 
-        super(JiraUtils, self).__init__(project_key)
+        super(JiraUtils, self).__init__(username, password)
+        self.__jira_project_key = jira_project_key
+
+    def project_key(self):
+        """Get the Jira project key"""
+
+        return self.__jira_project_key
 
     @staticmethod
     def jira_get_jira_ids(jql_result):
@@ -780,8 +790,20 @@ class JiraUtils(AtlassianUtils):
 
 class BitbucketUtils(AtlassianUtils):
 
-    def __init__(self, project_key):
-        super(BitbucketUtils, self).__init__(project_key)
+    def __init__(self, bitbucket_project_key, username, password):
+        """
+        :param bitbucket_project_key: the unique project key (e.g. Bitbucket)
+        :param username: The username to use for any Atlassian, REST call based operations
+        :param password: The (encoded) password to be used
+        """
+
+        super(BitbucketUtils, self).__init__(username, password)
+        self.__bitbucket_project_key = bitbucket_project_key
+
+    def project_key(self):
+        """Get the Bitbucket project key"""
+
+        return self.__bitbucket_project_key
 
     def bitbucket_get_all_items_from_repo(self, repo_slug, repo_key):
         """Get all items from a specific repo
@@ -1645,11 +1667,23 @@ class BambooUtils(AtlassianUtils):
 
         KNOWN_QUERY_TYPES = range(6)
 
-    def __init__(self, project_key):
-        super(BambooUtils, self).__init__(project_key)
+    def __init__(self, bamboo_project_key, username, password):
+        """
+        :param bamboo_project_key: the unique project key (e.g. Bamboo)
+        :param username: The username to use for any Atlassian, REST call based operations
+        :param password: The (encoded) password to be used
+        """
+
+        super(BambooUtils, self).__init__(username, password)
+        self.__bamboo_project_key = bamboo_project_key
         self.__query_types = BambooUtils.BambooQueryTypes
         self.__bamboo_server = self.get_bamboo_server()
         self.__bamboo_branch_name = self.get_bamboo_branch_name()
+
+    def project_key(self):
+        """Get the Bamboo project key"""
+
+        return self.__bamboo_project_key
 
     @property
     def query_types(self):
