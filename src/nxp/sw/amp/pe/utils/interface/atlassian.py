@@ -1820,7 +1820,7 @@ class BambooUtils(AtlassianUtils):
         :raise: Exception, ValueError on errors
         """
 
-        url = self.create_url(self.query_types.PLAN_QUERY, build_key=build_key)
+        url = self.create_url(self.query_types.RESULTS_QUERY, build_key=build_key)
         print("{0}URL used in query: '{1}'".format(os.linesep, url))
 
         response = self.rest_get(url)
