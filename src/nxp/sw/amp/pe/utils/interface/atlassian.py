@@ -60,6 +60,8 @@ class AtlassianAccount(object):
     def username(self, username_value):
         """Set the username"""
 
+        self.__username = username_value
+        
     @property
     def password(self):
         """Get the decoded password"""
