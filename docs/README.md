@@ -20,7 +20,7 @@ Usage
 -----
 
 from nxp.sw.amp.pe.utils.interface.atlassian import BitbucketUtils
-bb = BitbucketUtils("artd", "SVC_DEVTECH", "{base64_encoded_password")
+bb = BitbucketUtils("artd", "{username}", "{base64_encoded_password")
 tag = bb.bitbucket_get_tag("adc", "refs/tags/BLN_TEST_TOOLBOX_2.0.6")
 
 Contributing
