@@ -1,8 +1,11 @@
 
 Utils-Product-Engineering
 -------------------------
-
-This package provides a simple interface over multiple system operations.
+This is the first version of UtilsNG, a collection of utilities and APIs and provides a simple interface over multiple 
+system operations. Currently, the main purpose is to be used as wrapper for interaction with Atlassian API.
+This can be achieved by instantiating one of the three designated classes:
+JiraUtils, BitbucketUtils or BambooUtils by specifying the project key, the username and the password, which needs to be
+sent base64 encoded.
 
 Installation
 ------------
@@ -17,7 +20,7 @@ Usage
 -----
 
 from nxp.sw.amp.pe.utils.interface.atlassian import BitbucketUtils
-bb = BitbucketUtils("artd")
+bb = BitbucketUtils("artd", "{username}", "{base64_encoded_password")
 tag = bb.bitbucket_get_tag("adc", "refs/tags/BLN_TEST_TOOLBOX_2.0.6")
 
 Contributing
